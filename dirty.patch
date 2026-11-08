@@ -1,0 +1,36 @@
+diff --git a/app.py b/app.py
+index 9c51c13..f06bf7a 100644
+--- a/app.py
++++ b/app.py
+@@ -15,7 +15,7 @@ def load_items() -> list[Item]:
+     return [
+         Item("widget", 9.99, ["tools", "small"]),
+         Item("gadget", 24.50, ["tools"]),
+-        Item("doohickey", 3.25),
++        Item("doohickey", 4.25),
+     ]
+ 
+ 
+diff --git a/main.go b/main.go
+index 9c18a36..d57d9f2 100644
+--- a/main.go
++++ b/main.go
+@@ -6,7 +6,6 @@ import (
+ 	"strings"
+ )
+ 
+-// Item is a thing we sell.
+ type Item struct {
+ 	Name  string
+ 	Price float64
+@@ -17,8 +16,9 @@ type Item struct {
+ func loadItems() []Item {
+ 	return []Item{
+ 		{Name: "widget", Price: 9.99, Tags: []string{"tools", "small"}},
+-		{Name: "gadget", Price: 24.50, Tags: []string{"tools"}},
++		{Name: "gadget", Price: 19.50, Tags: []string{"tools"}},
+ 		{Name: "doohickey", Price: 3.25},
++		{Name: "gizmo", Price: 12.00},
+ 	}
+ }
+ 
