@@ -29,17 +29,25 @@ with `:source`. Use `:Dojo` to resume or start your next session.
 
 | Key | Command | Action |
 | --- | --- | --- |
-| `F5` | `:DojoCheck` | Check the result. Press again to continue after solving. |
-| `F6` | `:DojoHint` | Get a clue. Press again for the keys. |
-| `F7` | `:DojoReset` | Restore the task and starting cursor. |
-| `F8` | `:DojoSkip` | Move to the next task. |
-| `F9` | `:DojoUsed` | After solving without hints, confirm you used the suggested technique and continue. |
+| `<LocalLeader>h` | `:DojoHint` | Get a clue. Press again for the keys. |
+| `<LocalLeader>r` | `:DojoReset` | Restore the task and starting cursor. |
+| `<LocalLeader>s` | `:DojoSkip` | Move to the next task. |
+| `Enter` | `:DojoNext` | Continue once the task is solved. Until then Enter is not mapped. |
+| | `:DojoCheck` | Show where the attempt stands. |
+| | `:DojoUsed` | After solving without hints, confirm you used the suggested technique and continue. |
 | | `:DojoClose` | Close the practice tab. |
 
-Use any technique that gives the requested result. For a search and jump-back
-task, check once at the definition and again when you return to the call site.
-The drills use scratch buffers, so you can experiment and reset as often as you
-like.
+`<LocalLeader>` is `\` unless you have set `maplocalleader`.
+
+Use any technique that gives the requested result. There is no check key. The
+dojo checks after every Normal-mode change, when you leave Insert mode, and when
+the cursor moves. A search and jump-back task advances when the cursor reaches
+the definition and is solved when it returns to the call site. The drills use
+scratch buffers, so you can experiment and reset as often as you like.
+
+The built-in object and repeat drills highlight the text that still has to
+change, except where finding it is the exercise. Put
+`let g:vim_dojo_highlight = 0` in your vimrc to turn the highlight off.
 
 Progress stays on this machine. The dojo saves drill IDs, times, and outcomes in
 `${XDG_STATE_HOME:-$HOME/.local/state}/vim-dojo`. Set `g:vim_dojo_state_dir`

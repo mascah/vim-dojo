@@ -60,7 +60,7 @@ function! s:Objects() abort
         \  'hint': 'Use the surrounding quotes to target both words in the value.',
         \  'keys': 'ci"ready to ship<Esc>',
         \  'why': 'ci" changes the whole value even when the cursor is on its second word.'},
-        \ {'id': 'catalog-string', 'ft': 'go', 'start': 'return []Item',
+        \ {'id': 'catalog-string', 'ft': 'go', 'start': 'return []Item', 'locate': 1,
         \  'goal': 'In the catalog below, rename "bulk spacer" to "steel washer".',
         \  'lines': ['func loadItems() []Item {',
         \            '    return []Item{',
