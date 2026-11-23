@@ -336,6 +336,23 @@ Slices in build order. Each leaves the dojo usable.
    each skill can land separately.
 6. **Friction inbox** (inbox). Independent of the others.
 
+### Delivery status
+
+All six slices are implemented on `dojo-v2`, and `test/dojo.vim` covers every
+acceptance item. Departures from the text above:
+
+- **Custom solutions are never run.** Running keys from a JSON file in the
+  learner's Vim can run shell commands, and `:sandbox` forbids any buffer edit,
+  so it cannot contain them. A custom `solution` gives par and detection only;
+  custom drills still need `expected` or `target`, and have no demo.
+- **Capture counts only keys with a `typedchar`.** That drops keys replayed by
+  `.` and `@`, and Vim's own expansions such as `x` into `dl`. A learner mapping
+  that expands to several keys is seen as its first key.
+- **Mode comes from autocommands, not `mode()`**, which reports Ex mode
+  throughout a headless run.
+- **Undo drills** use optional `history` and `redo` fields, built with
+  `setline()` so the starting buffer has something to undo.
+
 ### Known risks, from a headless prototype on Vim 9.2
 
 - **Dot replay leaks into capture, with a likely filter.** `KeyInputPre` fires

@@ -1,30 +1,83 @@
-function! vim_dojo#drills#All() abort
-  let drills = []
-  let groups = {'objects': s:Objects(), 'repeat': s:Repeat(), 'jumps': s:Jumps()}
-  for skill in ['objects', 'repeat', 'jumps']
-    let tasks = groups[skill]
-    for index in range(len(tasks))
-      let task = tasks[index]
-      let task.skill = skill
-      let task.application = index >= 2
-      let task.position = s:Position(task.lines, task.start)
-      let task.expected = copy(task.lines)
-      if has_key(task, 'replace')
-        let [before, after] = task.replace
-        let pattern = '\V' . escape(before, '\')
-        let replacement = escape(after, '\&~')
-        let context = get(task, 'on_lines_with', '')
-        call map(task.expected, {_, line -> stridx(line, context) < 0
-              \ ? line : substitute(line, pattern, replacement, 'g')})
-      elseif has_key(task, 'delete_line')
-        call filter(task.expected, {_, line -> line !=# task.delete_line})
+" Skills in teaching order. Each built-in skill lives in
+" autoload/vim_dojo/skills/{id}.vim and returns its techniques in order.
+let s:skills = [['move', 'Move'], ['edit', 'Edit'], ['objects', 'Objects'],
+      \ ['repeat', 'Repeat'], ['search', 'Search and jumps'], ['visual', 'Visual'],
+      \ ['registers', 'Registers and macros'], ['ex', 'Ex'], ['custom', 'Custom']]
+let s:special = '<\%(lt\|Esc\|CR\|BS\|Tab\|Up\|Down\|Left\|Right\|C-[^>]\+\)>'
+
+function! vim_dojo#drills#Skills() abort
+  return deepcopy(s:skills)
+endfunction
+
+" Every technique in curriculum order, each with its drills. Custom drills
+" join their declared technique, or stand as a technique of their own.
+function! vim_dojo#drills#Techniques() abort
+  let techniques = []
+  for [skill, _] in s:skills[: -2]
+    for technique in vim_dojo#skills#{skill}#Techniques()
+      let technique.skill = skill
+      for drill in technique.drills
+        call extend(drill, {'skill': skill, 'technique': technique.id})
+      endfor
+      call add(techniques, technique)
+    endfor
+  endfor
+  let by_id = {}
+  for technique in techniques
+    let by_id[technique.id] = technique
+  endfor
+  for drill in s:Custom(techniques)
+    if has_key(drill, 'technique')
+      let drill.skill = by_id[drill.technique].skill
+      call add(by_id[drill.technique].drills, drill)
+    else
+      call add(techniques, {'id': drill.id, 'keys': drill.id, 'name': drill.goal,
+            \ 'skill': drill.skill, 'custom': 1, 'drills': [drill]})
+    endif
+  endfor
+  return techniques
+endfunction
+
+" Fills a drill's template variables and works out everything that can be
+" known before the drill is played: start cursor, solution keys and par.
+function! vim_dojo#drills#Instance(drill) abort
+  let task = deepcopy(a:drill)
+  if has_key(task, 'vars')
+    let pick = {}
+    for [name, values] in items(task.vars)
+      let value = values[rand() % len(values)]
+      if type(value) == v:t_dict
+        call extend(pick, value)
       else
-        let task.destination = s:Position(task.lines, task.find)[0]
+        let pick[name] = value
       endif
     endfor
-    call extend(drills, tasks)
-  endfor
-  return drills
+    let task.variant = pick
+    call remove(task, 'vars')
+    call map(task, {_, field -> s:Fill(field, pick)})
+  endif
+  let task.position = has_key(task, 'start') ? s:Position(task.lines, task.start) : [1, 1]
+  if has_key(task, 'solution')
+    let task.tokens = vim_dojo#drills#Tokens(task.solution)
+    let task.par = len(task.tokens)
+  endif
+  if has_key(task, 'find')
+    let task.destination = s:Position(task.lines, task.find)[0]
+  endif
+  if type(get(task, 'target')) == v:t_string
+    let task.target = s:Position(task.lines, task.target)
+  endif
+  return task
+endfunction
+
+function! s:Fill(field, pick) abort
+  if type(a:field) == v:t_list
+    return map(copy(a:field), {_, item -> s:Fill(item, a:pick)})
+  elseif type(a:field) != v:t_string
+    return a:field
+  endif
+  return substitute(a:field, '{\(\w\+\)}',
+        \ '\=has_key(a:pick, submatch(1)) ? a:pick[submatch(1)] : submatch(0)', 'g')
 endfunction
 
 function! s:Position(lines, anchor) abort
@@ -37,172 +90,116 @@ function! s:Position(lines, anchor) abort
   throw 'Missing drill anchor: ' . a:anchor
 endfunction
 
-function! s:Objects() abort
-  return [
-        \ {'id': 'quoted-item', 'ft': 'python', 'start': 'widget',
-        \  'goal': 'Change the first item’s name to "ratchet".',
-        \  'lines': ['def load_items() -> list[Item]:',
-        \            '    return [',
-        \            '        Item("widget", 9.99, ["tools", "small"]),',
-        \            '        Item("gadget", 24.50, ["tools"]),',
-        \            '    ]'],
-        \  'replace': ['"widget"', '"ratchet"'],
-        \  'hint': 'A text object can target everything inside a pair of quotes.',
-        \  'keys': 'ci"ratchet<Esc>',
-        \  'why': 'ci" works anywhere inside the value, even if it contains spaces.'},
-        \ {'id': 'shipping-status', 'ft': 'python', 'start': 'pickup',
-        \  'goal': 'Change the shipping status to "ready to ship".',
-        \  'lines': ['order = {',
-        \            '    "customer": "Sam Lee",',
-        \            '    "status": "awaiting pickup",',
-        \            '}'],
-        \  'replace': ['"awaiting pickup"', '"ready to ship"'],
-        \  'hint': 'Use the surrounding quotes to target both words in the value.',
-        \  'keys': 'ci"ready to ship<Esc>',
-        \  'why': 'ci" changes the whole value even when the cursor is on its second word.'},
-        \ {'id': 'catalog-string', 'ft': 'go', 'start': 'return []Item', 'locate': 1,
-        \  'goal': 'In the catalog below, rename "bulk spacer" to "steel washer".',
-        \  'lines': ['func loadItems() []Item {',
-        \            '    return []Item{',
-        \            '        {Name: "widget", Price: 9.99, Tags: []string{"tools", "small"}},',
-        \            '        {Name: "bulk spacer", Price: 3.25, Tags: []string{"tools"}},',
-        \            '        {Name: "gadget", Price: 24.50, Tags: []string{"tools"}},',
-        \            '    }',
-        \            '}'],
-        \  'replace': ['"bulk spacer"', '"steel washer"'],
-        \  'hint': 'Find the item by name, then change the whole quoted value.',
-        \  'keys': '/bulk spacer<Enter>ci"steel washer<Esc>',
-        \  'why': 'The quote marks define the edit even when the name spans two words.'},
-        \ {'id': 'quoted-endpoint', 'ft': 'python', 'start': 'API_URL',
-        \  'goal': 'Change API_URL to "https://api.example.test/v2".',
-        \  'lines': ['API_URL = "http://localhost:8080/api"',
-        \            'HEALTH_URL = "http://localhost:8080/health"',
-        \            'TIMEOUT = 15'],
-        \  'replace': ['"http://localhost:8080/api"', '"https://api.example.test/v2"'],
-        \  'hint': 'Change everything inside the double quotes around the URL.',
-        \  'keys': 'f"lci"https://api.example.test/v2<Esc>',
-        \  'why': 'The same object covers punctuation and slashes inside the quotes.'},
-        \ {'id': 'call-arguments', 'ft': 'python', 'start': 'def total_price',
-        \  'goal': 'Make sum() take prices as its only argument in total_price().',
-        \  'lines': ['def total_price(items: list[Item]) -> float:',
-        \            '    prices = [item.price for item in items]',
-        \            '    return sum(float(item.price) for item in items)'],
-        \  'replace': ['float(item.price) for item in items', 'prices'],
-        \  'hint': 'Target the inside of the outer parentheses from within sum().',
-        \  'keys': '/) for item<Enter>lci(prices<Esc>',
-        \  'why': 'ci( changes a parenthesized expression, including any nested calls.'},
-        \ ]
+" Solutions are written in key notation, such as ci"ratchet<Esc>. A literal
+" < in the text is written <lt>.
+function! vim_dojo#drills#Tokens(keys) abort
+  let tokens = []
+  let rest = a:keys
+  while !empty(rest)
+    let token = matchstr(rest, '^\%(' . s:special . '\|.\)')
+    call add(tokens, token)
+    let rest = strpart(rest, len(token))
+  endwhile
+  return tokens
 endfunction
 
-function! s:Repeat() abort
-  return [
-        \ {'id': 'pending-jobs', 'ft': 'python', 'start': 'pending',
-        \  'goal': 'Mark all three jobs as queued.',
-        \  'lines': ['status["import"] = "pending"',
-        \            'status["export"] = "pending"',
-        \            'status["backup"] = "pending"'],
-        \  'replace': ['"pending"', '"queued"'],
-        \  'hint': 'Make one complete change. Move to the next value and repeat it.',
-        \  'keys': 'ciwqueued<Esc>j.j.',
-        \  'why': 'Dot repeats the change, including the text you typed in Insert mode.'},
-        \ {'id': 'retry-counts', 'ft': 'go', 'start': 'maxRetries: 2',
-        \  'goal': 'Set maxRetries to 5 for all three workers.',
-        \  'lines': ['workers := []Worker{',
-        \            '    {name: "api", maxRetries: 2},',
-        \            '    {name: "log", maxRetries: 2},',
-        \            '    {name: "job", maxRetries: 2},',
-        \            '}'],
-        \  'replace': ['maxRetries: 2', 'maxRetries: 5'],
-        \  'hint': 'Replace the first digit, then repeat that edit on the next two.',
-        \  'keys': 'f2r5j.j.',
-        \  'why': 'A single-character replacement is also a change that dot can repeat.'},
-        \ {'id': 'strip-debug-args', 'ft': 'python', 'start': 'def dispatch',
-        \  'goal': 'Remove the final debug=True argument from each publish() call.',
-        \  'lines': ['def dispatch(event, config):',
-        \            '    publish(event.id, debug=True)',
-        \            '    if config.save_archive:',
-        \            '        publish(event.archive_id, debug=True)',
-        \            '    audit(event.id, debug=True)',
-        \            '    publish(config.default_id, debug=True)'],
-        \  'replace': [', debug=True', ''], 'on_lines_with': 'publish(',
-        \  'hint': 'Delete from the comma up to the closing paren, then repeat at the other publish calls.',
-        \  'keys': 'At each publish() comma, use dt) for the first edit and . for the rest.',
-        \  'why': 'Dot repeats the delete and its motion, even when the calls are on scattered lines.'},
-        \ {'id': 'unskip-tests', 'ft': 'go', 'start': 'func TestInventory',
-        \  'goal': 'Remove all temporary skips and keep the test bodies.',
-        \  'lines': ['func TestInventory(t *testing.T) {',
-        \            '    t.Skip("temporary")',
-        \            '    checkInventory(t)',
-        \            '}',
-        \            '',
-        \            'func TestTotals(t *testing.T) {',
-        \            '    t.Skip("temporary")',
-        \            '    checkTotals(t)',
-        \            '}'],
-        \  'delete_line': '    t.Skip("temporary")',
-        \  'hint': 'Delete one whole skip line, then find the next skip and repeat.',
-        \  'keys': '/t\.Skip<Enter>dd/t\.Skip<Enter>.',
-        \  'why': 'Search can get you to the next edit without changing what dot repeats.'},
-        \ ]
+function! vim_dojo#drills#Raw(tokens) abort
+  return join(map(copy(a:tokens), {_, token -> token =~# '^' . s:special . '$'
+        \ ? eval('"\' . token . '"') : token}), '')
 endfunction
 
-function! s:Jumps() abort
-  return [
-        \ {'id': 'find-loader', 'ft': 'go', 'start': 'items :=', 'find': 'func loadItems',
-        \  'goal': 'Go to the definition of loadItems from its call in main().',
-        \  'lines': ['func loadItems() []Item {',
-        \            '    return []Item{{Name: "widget", Price: 9.99}}',
-        \            '}',
-        \            '',
-        \            'func main() {',
-        \            '    items := loadItems()',
-        \            '    fmt.Println(totalPrice(items))',
-        \            '}'],
-        \  'hint': 'Search backward for the function declaration.',
-        \  'keys': '?^func loadItems<Enter>, then Ctrl-O after checking the first stop.',
-        \  'why': 'Ctrl-O uses the jump list to return to the call site.'},
-        \ {'id': 'find-describe', 'ft': 'python', 'start': 'print(describe', 'find': 'def describe',
-        \  'goal': 'Go to the definition of describe from its call in render().',
-        \  'lines': ['def render(items):',
-        \            '    for item in items:',
-        \            '        print(describe(item))',
-        \            '',
-        \            'def describe(item):',
-        \            '    return f"{item.name}: ${item.price:.2f}"'],
-        \  'hint': 'Search forward for the line that defines the helper.',
-        \  'keys': '/^def describe<Enter>, then Ctrl-O after checking the first stop.',
-        \  'why': 'Searching for the declaration skips over calls with the same name.'},
-        \ {'id': 'find-fallback', 'ft': 'go', 'start': 'fmt.Println(fallback', 'find': 'func fallback',
-        \  'goal': 'From the print call, jump to the definition of fallback().',
-        \  'lines': ['func fallback() string {',
-        \            '    return "default"',
-        \            '}',
-        \            '',
-        \            '// Use fallback when a request times out.',
-        \            'func printResult() {',
-        \            '    value, err := fetch()',
-        \            '    if err != nil {',
-        \            '        fmt.Println(fallback())',
-        \            '        return',
-        \            '    }',
-        \            '    fmt.Println(value)',
-        \            '}'],
-        \  'hint': 'Include the Go declaration keyword in a backward search.',
-        \  'keys': '?^func fallback<Enter>, then Ctrl-O after checking the first stop.',
-        \  'why': 'A precise search skips the comment and Ctrl-O jumps back into the error branch.'},
-        \ {'id': 'find-total', 'ft': 'python', 'start': 'print(total_price', 'find': 'def total_price',
-        \  'goal': 'From the print call, jump to the definition of total_price().',
-        \  'lines': ['def total_price(items):',
-        \            '    return sum(item.price for item in items)',
-        \            '',
-        \            'def render(items):',
-        \            '    value = total_price(items)',
-        \            '    if value > 0:',
-        \            '        print(total_price(items))',
-        \            '',
-        \            '# total_price is also used by the daily summary.'],
-        \  'hint': 'Search for the definition so the other call is skipped.',
-        \  'keys': '?^def total_price<Enter>, then Ctrl-O after checking the first stop.',
-        \  'why': 'The jump list returns to the exact call you were inspecting.'},
-        \ ]
+function! vim_dojo#drills#Show(tokens) abort
+  return join(map(copy(a:tokens), {_, token -> token ==# '<lt>' ? '<' : token =~# '^\%( \|<Space>\)$' ? '␣' : token}))
+endfunction
+
+" A technique is detected when every stream it names matches its pattern:
+" n holds keys typed outside Insert mode, i the keys typed in Insert mode, and
+" c each finished command line, one per line, prefixed with : / or ?. In n
+" and i, and in their patterns, a key name such as <Left> stands for one
+" character, so a pattern like [wbe] cannot match the e inside it.
+function! vim_dojo#drills#Detect(technique, streams) abort
+  let detect = get(a:technique, 'detect', {})
+  return !empty(detect) && empty(filter(copy(detect), {kind, pattern -> a:streams[kind]
+        \ !~# (kind ==# 'c' ? pattern : vim_dojo#drills#Code(pattern))}))
+endfunction
+
+let s:codes = {}
+
+function! vim_dojo#drills#Code(text) abort
+  return substitute(a:text, '<[A-Za-z][-A-Za-z0-9]*>', '\=s:Code(submatch(0))', 'g')
+endfunction
+
+function! s:Code(name) abort
+  if !has_key(s:codes, a:name)
+    let s:codes[a:name] = nr2char(0xE000 + len(s:codes))
+  endif
+  return s:codes[a:name]
+endfunction
+
+function! s:Custom(techniques) abort
+  let dir = expand(get(g:, 'vim_dojo_drill_dir', '~/.vim/vim-dojo/drills'))
+  if !isdirectory(dir)
+    return []
+  endif
+  let ids = []
+  let known = {}
+  for technique in a:techniques
+    let known[technique.id] = technique.skill
+    call extend(ids, map(copy(technique.drills), {_, drill -> drill.id}))
+  endfor
+  let builtin = copy(ids)
+  let skills = map(copy(s:skills), {_, skill -> skill[0]})
+  let drills = []
+  for name in readdir(dir, {name -> name =~# '\.json$'})
+    try
+      let task = json_decode(join(readfile(dir . '/' . name), "\n"))
+      if type(task) != v:t_dict
+        throw 'Not an object'
+      endif
+      let required = ['id', 'goal', 'hint', 'why'] + (has_key(task, 'solution') ? [] : ['keys'])
+      for field in required + ['keys', 'ft', 'start', 'skill', 'technique', 'solution', 'target']
+        if (index(required, field) >= 0 || has_key(task, field)) && (type(get(task, field)) != v:t_string
+              \ || empty(task[field]) || task[field] =~# '[[:cntrl:]]')
+          throw 'Invalid ' . field
+        endif
+      endfor
+      if type(get(task, 'id')) == v:t_string && (index(builtin, task.id) >= 0 || has_key(known, task.id))
+        " A built-in added since this file was written took the name.
+        let task.id = 'custom-' . task.id
+      endif
+      if task.id !~# '^[a-z0-9-]\+$' || index(ids, task.id) >= 0 || has_key(known, task.id)
+        throw 'Invalid or duplicate id'
+      endif
+      if get(task, 'ft', 'text') !~# '^\w\+$' || has_key(task, 'technique') && !has_key(known, task.technique)
+        throw 'Unknown ft or technique'
+      endif
+      for field in ['lines'] + (has_key(task, 'target') ? [] : ['expected'])
+        if type(get(task, field)) != v:t_list || empty(task[field])
+              \ || !empty(filter(copy(task[field]), {_, line -> type(line) != v:t_string || line =~# '[\r\n]'}))
+          throw 'Invalid ' . field
+        endif
+      endfor
+      if !has_key(task, 'target') && task.lines ==# task.expected
+        throw 'Expected buffer must differ'
+      endif
+      let clean = {'custom': 1, 'ft': 'text', 'skill': index(skills, get(task, 'skill')) >= 0 ? task.skill : 'custom'}
+      for field in ['id', 'goal', 'hint', 'why', 'keys', 'lines', 'expected', 'ft', 'start', 'technique', 'solution', 'target']
+        if has_key(task, field)
+          let clean[field] = task[field]
+        endif
+      endfor
+      if !has_key(clean, 'keys')
+        let clean.keys = clean.solution
+      endif
+      if has_key(clean, 'target')
+        let clean.expected = copy(clean.lines)
+      endif
+      call vim_dojo#drills#Instance(clean)
+      call add(drills, clean)
+      call add(ids, clean.id)
+    catch
+      echomsg 'Vim Dojo skipped ' . name . ' (' . v:exception . ')'
+    endtry
+  endfor
+  return drills
 endfunction
