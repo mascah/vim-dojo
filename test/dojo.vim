@@ -215,6 +215,14 @@ try
   call s:Type('ciwqueuedjkj.j.')
   call assert_match('Last: 14 keys · par 14 · clean', s:Panel())
   iunmap jk
+  " Keys still queued when a goal is solved cannot leak into working out the
+  " next goal's target.
+  nnoremap Q ci"ratchet<Esc>j
+  call vim_dojo#Start(s:Round(['quoted-item', 'pending-jobs']))
+  call s:Type('Q')
+  call assert_match('2/2', s:Panel())
+  call assert_equal(repeat(['queued'], 3), map(copy(vim_dojo#Task().expected), 'matchstr(v:val, "\"\\zs\\w\\+\\ze\"$")'))
+  nunmap Q
   call vim_dojo#Start(s:Round(['pending-jobs']))
   call s:Type("ciwq.\<BS>ueued\<Esc>jciwqueued\<Esc>jciwqueued\<Esc>")
   call assert_match('Last: 34 keys · par 14 · try ', s:Panel())

@@ -189,6 +189,9 @@ function! s:Streams() abort
   return streams
 endfunction
 
+" Every goal's target is worked out when the round opens. A goal solved
+" mid-mapping or mid-burst opens the next with keys still queued, and
+" playing a solution then would run them too.
 " The first goal of a technique's first learn round is demonstrated before
 " it is handed over.
 function! s:OpenRound() abort
@@ -197,18 +200,23 @@ function! s:OpenRound() abort
   let technique = get(s:session.techniques, round.technique, {})
   let first = round.kind ==# 'learn' && !empty(technique)
         \ && !vim_dojo#progress#State([technique])[technique.id].rounds
-  call extend(s:session, {'round': round, 'technique': technique, 'index': 0, 'results': [],
-        \ 'summary': 0, 'last': '', 'round_started': localtime(), 'demo_first': first})
+  let tasks = []
+  for goal in round.goals
+    let s:session.task = vim_dojo#drills#Instance(goal)
+    call s:Prepare()
+    call add(tasks, s:session.task)
+  endfor
+  call extend(s:session, {'round': round, 'tasks': tasks, 'technique': technique, 'index': 0,
+        \ 'results': [], 'summary': 0, 'last': '', 'round_started': localtime(), 'demo_first': first})
   call s:OpenTask()
 endfunction
 
 function! s:OpenTask() abort
   call s:StopDemo()
-  let task = vim_dojo#drills#Instance(s:session.round.goals[s:session.index])
+  let task = s:session.tasks[s:session.index]
   call extend(s:session, {'task': task, 'attempt': vim_dojo#progress#Attempt(),
         \ 'hinted': 0, 'step': 0, 'hint': 0, 'feedback': []})
   call s:Save('started')
-  call s:Prepare()
   if s:session.demo_first && s:session.index == 0 && has_key(task, 'tokens') && !get(task, 'custom')
     call s:Demo()
   else
