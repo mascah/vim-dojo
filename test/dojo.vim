@@ -181,7 +181,7 @@ try
   call assert_equal('nofile', &l:buftype)
   let s:map = getline(1, '$')
   call assert_equal([], filter(copy(s:map), 'strdisplaywidth(v:val) > 80'))
-  call assert_match('○ new.*◐ shaky.*● solid.*Enter.*d diagnostic.*q close', s:map[-1])
+  call assert_match('○ new.*◐ shaky.*● solid.*Enter.*p page.*q close', s:map[-1])
   call assert_match('▶ Start today''s session.*learn ', getline('.'))
   call assert_match('New here', join(s:map))
   let s:skills = filter(copy(s:map), 'v:val =~# "^\\S.*of \\d\\+ solid"')
@@ -398,7 +398,7 @@ try
   let s:today = vim_dojo#progress#Day(localtime())
   DojoFocus dot
   call s:Play(7)
-  call assert_match('7 of 10 clean.*not passed, 8 clean in ten passes', s:Panel())
+  call assert_match('7 of 10 clean.*not passed: 8 of 10 clean passes', s:Panel())
   call assert_equal(0, s:Box('dot').box)
   DojoFocus dot
   call assert_match('Learn', s:Panel())
@@ -458,28 +458,75 @@ try
   call assert_notmatch('Last:', s:Panel())
   DojoClose
 
-  " diagnostic-places: a clean goal places its technique; the rest still teach.
-  let g:vim_dojo_state_dir = s:state . '/diagnostic'
+  " section-skip and outline: every section ends in its review row. Passing
+  " Foundations' review on a fresh state places its new lessons in the third
+  " box, so they open in review rounds; a lesson already learned keeps its
+  " box. Not passing changes nothing. The diagnostic is gone.
+  let g:vim_dojo_state_dir = s:state . '/section'
+  call mkdir(g:vim_dojo_state_dir, 'p')
+  call writefile([json_encode({'id': 'hjkl', 'technique': 'hjkl', 'result': 'round', 'kind': 'learn',
+        \ 'clean': 9, 'goals': 10, 'passed': v:true, 'seconds': 60, 'time': localtime()})],
+        \ g:vim_dojo_state_dir . '/000000000001-0000000001-000001.json')
   Dojo
-  call feedkeys('d', 'xt')
-  call assert_match('Diagnostic  ·  1/\d\+', s:Panel())
-  call assert_notmatch('Keys  \|Hint', s:Panel())
-  let s:placed = vim_dojo#Task().technique
-  call feedkeys('\h', 'xt')
-  call assert_match('No hints', s:Panel())
-  call s:Solve()
-  call assert_match('Diagnostic  ·  2/\d\+', s:Panel())
-  call assert_match('Last: \d\+ keys · par \d\+ · clean', s:Panel())
-  let s:unplaced = vim_dojo#Task().technique
-  DojoSkip
-  DojoClose
-  call vim_dojo#Focus(s:placed)
-  call assert_match('Review  ', s:Panel())
-  call vim_dojo#Focus(s:unplaced)
-  call assert_match('Learn  ', s:Panel())
+  call assert_equal('', maparg('d', 'n'))
+  call assert_false(exists('*vim_dojo#Diagnostic') || exists('*vim_dojo#progress#Diagnostic'))
+  for s:file in glob(s:root . '/autoload/**/*.vim', 0, 1) + [s:root . '/README.md']
+    call assert_equal([], filter(readfile(s:file), 'v:val =~? "diagnostic"'), s:file)
+  endfor
+  for s:name in map(vim_dojo#drills#Skills()[: -2], 'v:val[1]')
+    let s:row = search('^' . s:name . ' ', 'n')
+    if getline(s:row + 1) !~# '^  '
+      call cursor(s:row, 1)
+      call feedkeys("\<CR>", 'xt')
+    endif
+  endfor
+  let s:rows = filter(copy(b:dojo_rows), 'has_key(v:val, "technique") || has_key(v:val, "section")')
+  let s:expected = []
+  for s:section in s:outline
+    call extend(s:expected, map(filter(vim_dojo#drills#Techniques(), 'v:val.skill ==# s:section.id'),
+          \ '{"technique": v:val.id}') + [{'section': s:section.id}])
+  endfor
+  call assert_equal(s:expected, s:rows)
+  call cursor(index(b:dojo_rows, {'section': 'foundations'}) + 1, 1)
+  call assert_match('^  ▷ Review Foundations', getline('.'))
+  call feedkeys("\<CR>", 'xt')
+  call assert_match('Section review  Foundations  ·  1/20', s:Panel())
+  call assert_notmatch('Keys  ', s:Panel())
+  let s:drawn = {}
+  for s:goal in range(20)
+    let s:drawn[vim_dojo#Task().technique] = get(s:drawn, vim_dojo#Task().technique) + 1
+    if s:goal < 16
+      call s:Solve()
+    else
+      DojoSkip
+    endif
+  endfor
+  call assert_equal({'modes': 5, 'hjkl': 5, 'word': 5, 'insert': 5}, s:drawn)
+  call assert_match('16 of 20 clean.*passed', s:Panel())
+  call assert_match('3 lessons placed as known', s:Panel())
   DojoClose
   let s:state_now = vim_dojo#progress#State(vim_dojo#drills#Techniques())
-  call assert_equal([3, 0], [s:state_now[s:placed].box, s:state_now[s:unplaced].box])
+  call assert_equal([3, 1, 3, 3], map(['modes', 'hjkl', 'word', 'insert'], 's:state_now[v:val].box'))
+  call assert_equal(0, s:state_now['insert-line'].box)
+  DojoFocus modes
+  call assert_match('Review  modes and Esc  ·  1/10', s:Panel())
+  DojoClose
+  let g:vim_dojo_state_dir = s:state . '/section-failed'
+  call vim_dojo#Start([vim_dojo#progress#Section('foundations', vim_dojo#drills#Techniques())])
+  for s:goal in range(20)
+    if s:goal < 15
+      call s:Solve()
+    else
+      DojoSkip
+    endif
+  endfor
+  call assert_match('15 of 20 clean.*not passed: 16 of 20 clean passes', s:Panel())
+  DojoClose
+  let s:state_now = vim_dojo#progress#State(vim_dojo#drills#Techniques())
+  call assert_equal([0, 0, 0, 0], map(['modes', 'hjkl', 'word', 'insert'], 's:state_now[v:val].box'))
+  DojoFocus modes
+  call assert_match('·  page', s:Panel())
+  DojoClose
 
   " Playing solutions leaves the learner's history, @:, and clipboard alone,
   " and key names cannot pass for the letters inside them.

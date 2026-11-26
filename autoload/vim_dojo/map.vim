@@ -20,7 +20,6 @@ function! vim_dojo#map#Open() abort
     highlight default link DojoNew Comment
     highlight default link DojoSession Title
     nnoremap <buffer> <silent> <CR> <Cmd>call <SID>Enter()<CR>
-    nnoremap <buffer> <silent> d <Cmd>call <SID>Leave()<Bar>call vim_dojo#Diagnostic()<CR>
     nnoremap <buffer> <silent> q <Cmd>call <SID>Leave()<CR>
     nnoremap <buffer> <silent> p <Cmd>call <SID>Page()<CR>
   endif
@@ -65,7 +64,7 @@ function! s:Draw(initial) abort
     call add(rows, ['  Inbox notes are in ' . fnamemodify(inbox_dir, ':~'), {}])
   endif
   if vim_dojo#progress#Fresh()
-    call add(rows, ['  New here? Press d for a short diagnostic, or Enter to start at the beginning.', {}])
+    call add(rows, ['  New here? Pass a section''s review to skip it, or press Enter to begin.', {}])
   endif
   let parts = []
   for [kind, members] in [['review', b:dojo_plan.review], ['learn', b:dojo_plan.learn]]
@@ -95,10 +94,13 @@ function! s:Draw(initial) abort
               \ . s:Pad(s:words[level], 10) . s:Due(item, today)
         call add(rows, [substitute(line, '\s\+$', '', ''), {'technique': technique.id}])
       endfor
+      if skill !=# 'custom'
+        call add(rows, ['  ▷ Review ' . name, {'section': skill}])
+      endif
     endif
   endfor
   call add(rows, ['', {}])
-  call add(rows, ['  ○ new  ◐ shaky  ● solid   Enter practise · p page · d diagnostic · q close', {}])
+  call add(rows, ['  ○ new  ◐ shaky  ● solid   Enter practise · p page · q close', {}])
 
   let b:dojo_rows = map(copy(rows), {_, row -> row[1]})
   setlocal modifiable
@@ -120,6 +122,9 @@ function! s:Enter() abort
   elseif has_key(row, 'technique')
     call s:Leave()
     call vim_dojo#Focus(row.technique)
+  elseif has_key(row, 'section')
+    call s:Leave()
+    call vim_dojo#Start([vim_dojo#progress#Section(row.section, vim_dojo#drills#Techniques())])
   endif
 endfunction
 

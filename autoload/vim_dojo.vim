@@ -29,7 +29,8 @@ function! vim_dojo#Dojo() abort
 endfunction
 
 " Runs rounds one after another. A round is {'kind', 'technique', 'goals'}:
-" kind is learn, review, diagnostic, or free, and goals is a list of drills.
+" kind is learn, review, section, or free, and goals is a list of drills.
+" A section round also names its `section` and the section's `name`.
 function! vim_dojo#Start(rounds) abort
   call s:StopDemo()
   let techniques = {}
@@ -57,10 +58,6 @@ function! vim_dojo#Free() abort
     call extend(drills, technique.drills)
   endfor
   call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [drills[rand() % len(drills)]]}])
-endfunction
-
-function! vim_dojo#Diagnostic() abort
-  call vim_dojo#Start([vim_dojo#progress#Diagnostic(vim_dojo#drills#Techniques())])
 endfunction
 
 " The drill being practised, as the test suite and any tooling can read it.
@@ -716,9 +713,6 @@ function! s:Solved() abort
   let keys = len(s:session.log)
   let clean = !s:session.hinted && keys <= get(task, 'par', keys) + s:margin
   call s:Save(clean ? 'clean' : 'unclean', {'keys': keys, 'seconds': localtime() - s:session.started})
-  if clean && s:session.round.kind ==# 'diagnostic'
-    call s:Write({'id': task.id, 'technique': task.technique, 'result': 'placed'})
-  endif
   call s:Finish(clean, keys)
 endfunction
 
@@ -761,10 +755,22 @@ function! s:EndRound() abort
   let goals = len(s:session.results)
   let s:session.passed = clean * 10 >= s:pass * goals
   let s:session.seconds = localtime() - s:session.round_started
+  let record = {'result': 'round', 'kind': round.kind, 'clean': clean, 'goals': goals,
+        \ 'passed': s:session.passed, 'seconds': s:session.seconds}
   if index(['learn', 'review'], round.kind) >= 0
-    call s:Write({'id': round.technique, 'technique': round.technique, 'result': 'round',
-          \ 'kind': round.kind, 'clean': clean, 'goals': goals, 'passed': s:session.passed,
-          \ 'seconds': s:session.seconds})
+    call s:Write(extend(record, {'id': round.technique, 'technique': round.technique}))
+  endif
+  " A passed section review places the section's new lessons as known. Its
+  " own record names no technique, so it moves no box.
+  let s:session.placed = []
+  if round.kind ==# 'section'
+    call s:Write(extend(record, {'id': round.section, 'section': round.section}))
+    let lessons = filter(values(s:session.techniques), {_, t -> t.skill ==# round.section})
+    let state = vim_dojo#progress#State(lessons)
+    let s:session.placed = !s:session.passed ? [] : filter(lessons, {_, t -> !state[t.id].box})
+    for lesson in s:session.placed
+      call s:Write({'id': lesson.id, 'technique': lesson.id, 'result': 'placed'})
+    endfor
   endif
   let s:session.summary = 1
   setlocal nomodifiable
@@ -797,11 +803,6 @@ endfunction
 " The keys, then the demo. Any hint makes the goal not clean.
 function! s:Hint() abort
   let task = s:session.task
-  if s:session.round.kind ==# 'diagnostic'
-    let s:session.feedback = ['No hints in the diagnostic. Skip a goal you do not know.']
-    call s:Render()
-    return
-  endif
   let s:session.hinted = 1
   let s:session.hint += 1
   if s:session.hint == 1 || !has_key(task, 'tokens') || get(task, 'custom')
@@ -895,7 +896,7 @@ function! s:Title() abort
   let technique = s:session.technique
   let title = kind ==# 'learn' ? 'Learn  ' . technique.title
         \ : kind ==# 'review' ? 'Review  ' . technique.title
-        \ : kind ==# 'diagnostic' ? 'Diagnostic' : 'Free practice'
+        \ : kind ==# 'section' ? 'Section review  ' . s:session.round.name : 'Free practice'
   if len(s:session.rounds) > 1
     let title .= printf('  ·  round %d of %d', s:session.r + 1, len(s:session.rounds))
   endif
@@ -910,12 +911,12 @@ function! s:Summary() abort
   let kind = s:session.round.kind
   let lines = [s:Title() . '  ·  done', '', s:session.last, '',
         \ printf('%d of %d clean  ·  %d:%02d', clean, len(results), s:session.seconds / 60, s:session.seconds % 60)
-        \ . (index(['learn', 'review'], kind) < 0 ? '' : s:session.passed ? '  ·  passed'
-        \   : printf('  ·  not passed, %d clean in ten passes', s:pass))]
-  if kind ==# 'diagnostic'
-    let placed = len(uniq(sort(map(filter(copy(results), 'v:val.clean'), 'v:val.technique'))))
-    call add(lines, printf('%d %s placed as already known. The rest are taught as you meet them.',
-          \ placed, placed == 1 ? 'technique' : 'techniques'))
+        \ . (index(['learn', 'review', 'section'], kind) < 0 ? '' : s:session.passed ? '  ·  passed'
+        \   : printf('  ·  not passed: %d of %d clean passes', (s:pass * len(results) + 9) / 10, len(results)))]
+  if kind ==# 'section' && s:session.passed
+    let placed = len(s:session.placed)
+    call add(lines, printf('%d %s placed as known, in review rounds from now on.',
+          \ placed, placed == 1 ? 'lesson' : 'lessons'))
   endif
   let missed = filter(map(copy(results), {index, entry -> entry.clean ? ''
         \ : printf('  %d. %s  %s', index + 1, entry.goal, s:Outcome(entry))}), '!empty(v:val)')
@@ -958,9 +959,7 @@ function! s:Render() abort
     else
       call extend(lines, s:session.feedback)
       let leader = keytrans(get(g:, 'maplocalleader', '\'))
-      call add(lines, s:session.round.kind ==# 'diagnostic'
-            \ ? printf('%ss Skip   :DojoClose  Stop the diagnostic', leader)
-            \ : printf('%sh Hint   %sr Reset   %ss Skip   :DojoClose', leader, leader, leader))
+      call add(lines, printf('%sh Hint   %sr Reset   %ss Skip   :DojoClose', leader, leader, leader))
     endif
   endif
   if !empty(s:session.warning)

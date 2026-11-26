@@ -7,6 +7,7 @@ let s:read_cache = {}
 let s:intervals = [1, 3, 7, 14, 30]
 let s:placed_box = 3
 let s:round_length = 10
+let s:section_length = 20
 " v2 wrote solved, assisted, and recalled; they still mark a drill as tried.
 let s:results = ['started', 'clean', 'unclean', 'skipped', 'round', 'placed', 'solved', 'assisted', 'recalled']
 
@@ -93,7 +94,7 @@ function! vim_dojo#progress#Day(time) abort
 endfunction
 
 " Box, due day, and rounds taken per technique. Box 0 is new. Only round
-" records and diagnostic placements move a box, so v2's per-drill records,
+" records and section placements move a box, so v2's per-drill records,
 " graded by a broken key count, count for nothing. A passed round puts a new
 " technique in the first box and moves a known one up; a round that is not
 " passed leaves a new technique new and sends a known one back to the first.
@@ -180,28 +181,24 @@ function! vim_dojo#progress#Focus(technique) abort
   return vim_dojo#progress#Round(a:technique, known ? 'review' : 'learn')
 endfunction
 
-" About ten built-in techniques, taken in turn from each skill.
-function! vim_dojo#progress#Diagnostic(techniques) abort
-  let by_skill = {}
-  let order = []
-  for technique in filter(copy(a:techniques), {_, t -> !get(t, 'custom') && !empty(t.drills)})
-    if !has_key(by_skill, technique.skill)
-      let by_skill[technique.skill] = []
-      call add(order, technique.skill)
-    endif
-    call add(by_skill[technique.skill], technique)
+" A section's review: twenty goals drawn evenly from its lessons, shuffled.
+function! vim_dojo#progress#Section(section, techniques) abort
+  let lessons = filter(copy(a:techniques), {_, t -> t.skill ==# a:section})
+  let goals = []
+  for index in range(len(lessons))
+    let share = s:section_length / len(lessons) + (index < s:section_length % len(lessons))
+    call extend(goals, s:Shuffle(vim_dojo#progress#Round(lessons[index], 'section').goals)[: share - 1])
   endfor
-  let picked = []
-  let round = 0
-  while len(picked) < 10 && round < 10
-    for skill in order
-      if len(picked) < 10 && round < len(by_skill[skill])
-        call add(picked, by_skill[skill][round])
-      endif
-    endfor
-    let round += 1
-  endwhile
-  return {'kind': 'diagnostic', 'technique': '', 'goals': map(picked, {_, t -> s:Order(t)[0]})}
+  let name = get(filter(vim_dojo#drills#Skills(), {_, s -> s[0] ==# a:section}), 0, ['', a:section])[1]
+  return {'kind': 'section', 'technique': '', 'section': a:section, 'name': name, 'goals': s:Shuffle(goals)}
+endfunction
+
+function! s:Shuffle(list) abort
+  for index in range(len(a:list) - 1, 1, -1)
+    let other = rand() % (index + 1)
+    let [a:list[index], a:list[other]] = [a:list[other], a:list[index]]
+  endfor
+  return a:list
 endfunction
 
 " Friction inbox: one file per note under inbox/ in the state directory.
