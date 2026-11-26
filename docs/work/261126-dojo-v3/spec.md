@@ -427,7 +427,12 @@ only; the v2 map keeps working until slice 5 replaces it.
    Runs on the existing drills, so it can be tried with `:DojoFocus` before
    any new content exists. Removes `detect` from every technique and
    `vim_dojo#drills#Detect`; rewrites `progress#State`, `Plan`, and `Focus`
-   around rounds.
+   around rounds. Done 2026-11-26. Until slice 4 gives each lesson a key
+   table, a learn round pins the technique's keys, name, and two-line card.
+   The clue and `why` text left the built-in drills, and custom files no
+   longer need them. A custom drill with no solution has no par and is clean
+   when solved without a hint. The diagnostic places on a clean goal. Old
+   records stay readable but move no box.
 3. **Generated goals and snippets** (generated-goal, targets-from-vim,
    no-short-walk, hop, goals-differ, snippet-set). Adds the generator
    interpreter beside `vim_dojo#drills#Instance`, and the snippet files.

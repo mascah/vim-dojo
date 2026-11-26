@@ -21,7 +21,7 @@ function! Drill(id) abort
   for technique in vim_dojo#drills#Techniques()
     for drill in technique.drills
       if drill.id ==# a:id
-        call vim_dojo#Start([extend(copy(drill), {'phase': 'Typing'})])
+        call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [drill]}])
       endif
     endfor
   endfor
@@ -65,12 +65,8 @@ check startup 'Start today'
 tmux send-keys -t "$session" ":call Drill('find-equals')" Enter
 check real-typing-count 'Move onto the = sign'
 slowly f =
-check real-typing-count 'Solved in 2 keys · par 2'
-check real-typing-count 'You: f =$'
-if screen | grep -q CursorHold; then
-  echo 'FAIL real-typing-count: <CursorHold> was counted'
-  failed=1
-fi
+# Two keys: a dropped key or a counted <CursorHold> would show another count.
+check real-typing-count 'Last: 2 keys · par 2 · clean'
 
 # dot-still-one: a burst, then single keys after pauses.
 tmux send-keys -t "$session" ":call Drill('pending-jobs')" Enter
@@ -78,7 +74,7 @@ check dot-still-one 'Mark all three jobs as queued'
 sleep 0.3
 tmux send-keys -t "$session" ciwqueued
 slowly Escape j . j .
-check dot-still-one 'Solved in 14 keys · par 14'
+check dot-still-one 'Last: 14 keys · par 14 · clean'
 
 tmux send-keys -t "$session" ':qa!' Enter
 [ "$failed" = 0 ] && echo 'typing check passed'

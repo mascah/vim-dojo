@@ -18,18 +18,29 @@ function! s:Records() abort
 endfunction
 
 function! s:Last() abort
-  return s:Records()[-1]
+  " The next goal's started record follows a solved one at once.
+  return filter(s:Records(), 'index(["round", "started", "placed"], v:val.result) < 0')[-1]
 endfunction
 
 function! s:Drill(id) abort
   for technique in vim_dojo#drills#Techniques()
     for drill in technique.drills
       if drill.id ==# a:id
-        return extend(copy(drill), {'phase': 'Test'})
+        return copy(drill)
       endif
     endfor
   endfor
   throw 'No drill ' . a:id
+endfunction
+
+" A round of the named drills, of a kind that schedules nothing by default.
+function! s:Round(ids, ...) abort
+  let goals = map(copy(a:ids), 's:Drill(v:val)')
+  return [{'kind': get(a:, 1, 'free'), 'technique': get(goals[0], 'technique', ''), 'goals': goals}]
+endfunction
+
+function! s:Box(id) abort
+  return vim_dojo#progress#State(vim_dojo#drills#Techniques())[a:id]
 endfunction
 
 " A headless Vim raises InsertLeave by itself but not TextChanged or
@@ -42,6 +53,17 @@ endfunction
 
 function! s:Solve() abort
   call s:Type(vim_dojo#drills#Raw(vim_dojo#Task().tokens))
+endfunction
+
+" Solves the first clean goals of the round at par and skips the rest.
+function! s:Play(clean) abort
+  for s:goal in range(10)
+    if s:goal < a:clean
+      call s:Solve()
+    else
+      DojoSkip
+    endif
+  endfor
 endfunction
 
 " Types into a real Vim and waits for its screen to show the pattern.
@@ -65,7 +87,7 @@ try
   let s:map = getline(1, '$')
   call assert_equal([], filter(copy(s:map), 'strdisplaywidth(v:val) > 80'))
   call assert_match('○ new.*◐ shaky.*● solid.*Enter.*d diagnostic.*q close', s:map[-1])
-  call assert_match('▶ Start today''s session', getline('.'))
+  call assert_match('▶ Start today''s session.*learn ', getline('.'))
   call assert_match('New here', join(s:map))
   let s:skills = filter(copy(s:map), 'v:val =~# "^\\S.*of \\d\\+ solid"')
   call assert_true(len(s:skills) >= 4)
@@ -83,33 +105,47 @@ try
   call assert_match('^  ○ .*new', getline(s:closed + 1))
   call feedkeys("\<CR>", 'xt')
   call assert_equal(s:before, line('$'))
-  " Enter on the session row starts today's session, which teaches first.
+  " round-length, auto-advance, keys-pinned, learn-pass: today's session on a
+  " fresh state is a learn round of ten on the first technique.
+  let s:first = vim_dojo#drills#Techniques()[0]
   call cursor(search('▶'), 1)
   call feedkeys("\<CR>", 'xt')
-  call assert_match('1/2  ·  Practice', s:Panel())
-  call assert_match('New technique', s:Panel())
+  call assert_match('Learn  ' . escape(s:first.keys, '\') . '  ·  1/10', s:Panel())
+  call assert_match('Keys  ' . escape(s:first.keys, '\'), s:Panel())
+  call assert_notmatch('Last:', s:Panel())
   let s:task = vim_dojo#Task()
   call assert_equal(s:task.lines, getline(1, '$'))
   call assert_equal(s:task.position, [line('.'), col('.')])
   call s:Solve()
-  call assert_match(printf('Solved in %d keys · par %d', s:task.par, s:task.par), s:Panel())
-  call assert_equal('recalled', s:Last().result)
-  call feedkeys("\<CR>", 'xt')
-  call assert_match('2/2  ·  Apply', s:Panel())
-  call assert_notmatch('New technique', s:Panel())
-  call feedkeys('\s', 'xt')
-  call assert_match('1 of 2 solved', s:Panel())
-  " Enter after the session goes back to the map, where the technique is shaky.
+  call assert_match('2/10', s:Panel())
+  call assert_match(printf('Last: %d keys · par %d · clean', s:task.par, s:task.par), s:Panel())
+  call assert_match('Keys  ' . escape(s:first.keys, '\'), s:Panel())
+  call assert_equal('clean', s:Last().result)
+  call assert_equal('', maparg('<CR>', 'n'))
+  for s:goal in range(1, 9)
+    call assert_match(printf('%d/10', s:goal + 1), s:Panel())
+    if s:goal < 8
+      call s:Solve()
+    else
+      DojoSkip
+    endif
+  endfor
+  " summary: the clean count and time, each goal that was not clean, Enter out.
+  call assert_match('8 of 10 clean  ·  \d:\d\d  ·  passed', s:Panel())
+  call assert_match('Not clean:\n  9\. .*skipped · par \d\+ · try ', s:Panel())
+  call assert_match('Last: skipped', s:Panel())
+  call assert_equal('<Cmd>DojoNext<CR>', maparg('<CR>', 'n'))
   call feedkeys("\<CR>", 'xt')
   call assert_match('◐ .*shaky\s\+due tomorrow', join(getline(1, '$'), "\n"))
+  call assert_equal(vim_dojo#progress#Day(localtime()) + 1, s:Box(s:first.id).due)
   call feedkeys('q', 'xt')
   call assert_equal(s:original, bufnr('%'))
   call assert_equal('An unsaved edit in the original window', getline(1))
   call assert_true(&modified)
 
   " teach-first-meeting, demo-not-counted, highlight, auto-check, no-f-keys.
-  call vim_dojo#Start([s:Drill('quoted-item')])
-  call assert_match('New technique  i" a"', s:Panel())
+  call vim_dojo#Start(s:Round(['quoted-item', 'quoted-item'], 'learn'))
+  call assert_match('Keys  i" a"', s:Panel())
   call assert_equal(s:Drill('quoted-item').lines, getline(1, '$'))
   call assert_equal('w', strpart(getline('.'), col('.') - 1, 1))
   call assert_equal(repeat([''], 6), map(['<F5>', '<F6>', '<F7>', '<F8>', '<F9>', '<CR>'], 'maparg(v:val, "n")'))
@@ -124,98 +160,100 @@ try
   call assert_match('widget', getline('.'))
   call assert_notmatch('differs', s:Panel())
   call s:Type("ci\"ratchet\<Esc>")
-  call assert_match('Solved in 11 keys · par 11', s:Panel())
-  call assert_match('You: c i " r a t c h e t <Esc>', s:Panel())
-  call assert_equal('recalled', s:Last().result)
-  call assert_equal(11, s:Last().keys)
-  call assert_equal('<Cmd>DojoNext<CR>', maparg('<CR>', 'n'))
-
-  " The second drill of a technique shows neither card nor demo.
-  call vim_dojo#Start([s:Drill('shipping-status')])
-  call assert_notmatch('New technique', s:Panel())
-  " recalled-detected: another route solves but is not recalled.
-  call vim_dojo#Start([s:Drill('quoted-item')])
+  call assert_match('2/2', s:Panel())
+  call assert_match('Last: 11 keys · par 11 · clean', s:Panel())
+  call assert_equal(['clean', 11], [s:Last().result, s:Last().keys])
+  " par-grading: other keys within par plus two are clean; plus three is not.
+  call s:Type("lhvecratchet\<Esc>")
+  call assert_match('Last: 13 keys · par 11 · clean', s:Panel())
+  call assert_equal('clean', s:Last().result)
+  call vim_dojo#Start(s:Round(['quoted-item', 'quoted-item']))
+  call s:Type("lhlhcwratchet\<Esc>")
+  call assert_match('Last: 14 keys · par 11 · try c i " r a t c h e t <Esc>', s:Panel())
+  call assert_equal('unclean', s:Last().result)
+  " not-clean-shown: the summary lists it again, with the long way round.
   call s:Type("xxxxxxiratchet\<Esc>")
-  call assert_match('Solved in 15 keys · par 11', s:Panel())
-  call assert_match('This drill practises i" a"', s:Panel())
-  call assert_match('Repeated x', s:Panel())
-  call assert_equal('solved', s:Last().result)
-  " Three-step hints: clue, keys, demo. Any hint makes the attempt assisted.
-  call vim_dojo#Start([s:Drill('quoted-item')])
-  call feedkeys('\h', 'xt')
-  call assert_match('Hint  A text object', s:Panel())
+  call assert_match('0 of 2 clean', s:Panel())
+  call assert_match('  1\. Change the first item’s name to "ratchet"\.  14 keys · par 11 · try c i "', s:Panel())
+  call assert_match('  2\. .*15 keys · par 11 · try c i "', s:Panel())
+  call assert_equal(1, count(s:Panel(), 'Repeated x'))
+  call assert_notmatch('·  passed\|not passed', s:Panel())
+  " No detection pattern remains.
+  for s:file in glob(s:root . '/autoload/**/*.vim', 0, 1)
+    call assert_equal([], filter(readfile(s:file), 'v:val =~? "detect"'), s:file)
+  endfor
+  " hint-direct: the first hint shows the keys and spoils the goal however
+  " few keys follow; a second plays the demo.
+  call vim_dojo#Start(s:Round(['quoted-item', 'quoted-item']))
   call feedkeys('\h', 'xt')
   call assert_match('Hint  c i " r a t c h e t <Esc>', s:Panel())
+  call s:Type("ci\"ratchet\<Esc>")
+  " The hint key itself counts as one.
+  call assert_match('Last: 12 keys · par 11 · hint · try c i "', s:Panel())
+  call assert_equal('unclean', s:Last().result)
+  call feedkeys('\h', 'xt')
   normal! x
   call feedkeys('\h', 'xt')
   call assert_match('widget', getline('.'))
   call assert_notmatch('Hint  c i', s:Panel())
-  call s:Type("ci\"ratchet\<Esc>")
-  call assert_match('Solved in 11 keys', s:Panel())
-  call assert_equal('assisted', s:Last().result)
   " A learner's own buffer-local Enter survives the panel redrawing.
-  call vim_dojo#Start([s:Drill('shipping-status')])
+  call vim_dojo#Start(s:Round(['shipping-status']))
   nnoremap <buffer> <CR> <Nop>
   call feedkeys('\h', 'xt')
   call assert_equal('<Nop>', maparg('<CR>', 'n'))
   nunmap <buffer> <CR>
   call feedkeys('\s', 'xt')
-  call assert_match('0 of 1 solved', s:Panel())
+  call assert_match('0 of 1 clean', s:Panel())
   call assert_equal('skipped', s:Last().result)
 
   " key-count, mapping-aware, insert-dot.
-  call vim_dojo#Start([s:Drill('pending-jobs')])
+  call vim_dojo#Start(s:Round(['pending-jobs']))
   call s:Type("ciwqueued\<Esc>j.j.")
-  call assert_match('Solved in 14 keys · par 14', s:Panel())
-  call assert_equal('recalled', s:Last().result)
+  call assert_match('Last: 14 keys · par 14 · clean', s:Panel())
   inoremap jk <Esc>
-  call vim_dojo#Start([s:Drill('pending-jobs')])
+  call vim_dojo#Start(s:Round(['pending-jobs']))
   call s:Type('ciwqueuedjkj.j.')
-  call assert_match('Solved in 14 keys', s:Panel())
-  call assert_match('You: c i w q u e u e d <Esc> j \. j \.', s:Panel())
-  call assert_equal('recalled', s:Last().result)
+  call assert_match('Last: 14 keys · par 14 · clean', s:Panel())
   iunmap jk
-  call vim_dojo#Start([s:Drill('pending-jobs')])
+  call vim_dojo#Start(s:Round(['pending-jobs']))
   call s:Type("ciwq.\<BS>ueued\<Esc>jciwqueued\<Esc>jciwqueued\<Esc>")
-  call assert_match('Solved', s:Panel())
-  call assert_equal('solved', s:Last().result)
+  call assert_match('Last: 34 keys · par 14 · try ', s:Panel())
 
   " cursor-target: a jump drill advances both steps with no check key.
-  call vim_dojo#Start([s:Drill('find-loader')])
+  call vim_dojo#Start(s:Round(['find-loader']))
   call assert_equal([], getmatches())
   DojoCheck
   call assert_match('Move the cursor onto the definition', s:Panel())
   call s:Type("?^func loadItems\r")
   call assert_match('Found the definition', s:Panel())
   call s:Type("\<C-O>")
-  call assert_match('Solved', s:Panel())
-  call assert_equal('recalled', s:Last().result)
+  call assert_match('1 of 1 clean', s:Panel())
   " Typed faster than the dojo saw the first stop.
-  call vim_dojo#Start([s:Drill('find-describe')])
+  call vim_dojo#Start(s:Round(['find-describe']))
   call s:Solve()
-  call assert_match('Solved', s:Panel())
+  call assert_match('1 of 1 clean', s:Panel())
   " A drill with a cursor target is solved when the cursor lands on it.
-  let s:task = {'id': 'to-comma', 'phase': 'Test', 'skill': 'custom', 'ft': 'text',
+  let s:task = {'id': 'to-comma', 'skill': 'custom', 'ft': 'text',
         \ 'lines': ['alpha, beta'], 'expected': ['alpha, beta'], 'target': [1, 6],
-        \ 'goal': 'Move to the comma.', 'hint': 'Find a character.', 'keys': 'f,', 'why': 'f lands on it.'}
-  call vim_dojo#Start([s:task])
+        \ 'goal': 'Move to the comma.', 'keys': 'f,'}
+  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [s:task]}])
   call assert_equal([[1, 6, 1]], map(getmatches(), 'v:val.pos1'))
   call s:Type('x')
   call s:Type('f,')
   call assert_match('differs', s:Panel())
   DojoReset
   call s:Type('l')
-  call assert_notmatch('Solved', s:Panel())
+  call assert_notmatch('clean', s:Panel())
   call assert_match('Right line', s:Panel())
   call s:Type('f,')
-  call assert_match('Solved', s:Panel())
+  call assert_match('Last: 3 keys · clean', s:Panel())
   DojoClose
 
   " highlight: nothing where finding the text is the exercise, or when off.
-  call vim_dojo#Start([s:Drill('catalog-string')])
+  call vim_dojo#Start(s:Round(['catalog-string']))
   call assert_equal([], getmatches())
   let g:vim_dojo_highlight = 0
-  call vim_dojo#Start([s:Drill('quoted-item')])
+  call vim_dojo#Start(s:Round(['quoted-item']))
   call assert_equal([], getmatches())
   unlet g:vim_dojo_highlight
   DojoClose
@@ -225,73 +263,107 @@ try
     call assert_notmatch('ratchet\|queued\|loadItems\|ci"', join(readfile(g:vim_dojo_state_dir . '/' . s:name)))
   endfor
 
-  " commands-removed and focus.
+  " commands-removed, focus, and round-length from :DojoFocus, which reviews
+  " quote now that the learn round above passed.
   call assert_equal([0, 0], [exists(':DojoCatalog'), exists(':DojoLessons')])
   DojoFree
-  call assert_match('1/1.*Free practice', s:Panel())
+  call assert_match('Free practice  ·  1/1', s:Panel())
   call assert_equal(0, exists(':DojoUsed'))
   DojoClose
   DojoFocus quote
-  for s:index in range(3)
+  for s:index in range(10)
     call assert_equal('quote', vim_dojo#Task().technique)
-    call assert_match('Focus', s:Panel())
+    call assert_match(printf('Review  Inside or around quotes  ·  %d/10', s:index + 1), s:Panel())
     DojoSkip
   endfor
-  call assert_match('0 of 3 solved', s:Panel())
+  call assert_match('0 of 10 clean.*not passed', s:Panel())
   DojoClose
   call assert_equal(['quote'], vim_dojo#Complete('quo'))
 
-  " schedule-per-technique and old-state-loads, from records written by hand.
+  " box-by-round and learn-pass, by playing rounds on a fresh state.
+  let g:vim_dojo_state_dir = s:state . '/rounds'
+  let s:today = vim_dojo#progress#Day(localtime())
+  DojoFocus dot
+  call s:Play(7)
+  call assert_match('7 of 10 clean.*not passed, 8 clean in ten passes', s:Panel())
+  call assert_equal(0, s:Box('dot').box)
+  DojoFocus dot
+  call assert_match('Learn', s:Panel())
+  call s:Play(8)
+  call assert_equal([1, s:today + 1], [s:Box('dot').box, s:Box('dot').due])
+  DojoFocus dot
+  call assert_match('Review  Repeat the last change  ·  1/10', s:Panel())
+  call assert_notmatch('Keys  \|Make one complete edit', s:Panel())
+  call s:Play(8)
+  call assert_equal([2, s:today + 3], [s:Box('dot').box, s:Box('dot').due])
+  DojoFocus dot
+  call s:Play(7)
+  call assert_equal([1, s:today + 1], [s:Box('dot').box, s:Box('dot').due])
+  " Left early: the goals done stay in the record and nothing moves.
+  let s:clean = len(filter(s:Records(), 'v:val.result ==# "clean"'))
+  DojoFocus dot
+  call s:Solve()
+  call s:Solve()
+  DojoClose
+  call assert_equal(s:clean + 2, len(filter(s:Records(), 'v:val.result ==# "clean"')))
+  call assert_equal(1, s:Box('dot').box)
+  call assert_equal(4, len(filter(s:Records(), 'v:val.result ==# "round"')))
+
+  " Today's session reviews up to three due techniques, oldest first, then
+  " teaches the next new one. v2 records count for nothing.
   let g:vim_dojo_state_dir = s:state . '/schedule'
   call mkdir(g:vim_dojo_state_dir, 'p')
   let s:now = localtime()
-  let s:old = s:now - 4 * 86400
-  for [s:file, s:record] in [
-        \ ['000000000001-0000000001-000001.json', {'id': 'quoted-item', 'result': 'recalled', 'time': s:old}],
-        \ ['000000000002-0000000001-000002.json', {'id': 'pending-jobs', 'result': 'recalled', 'time': s:old}],
-        \ ['000000000003-0000000001-000003.json', {'id': 'retry-counts', 'result': 'recalled', 'time': s:now, 'technique': 'dot', 'keys': 8, 'seconds': 5}],
-        \ ['000000000004-0000000001-000004.json', {'id': 'find-loader', 'result': 'skipped', 'time': s:now}]]
-    call writefile([json_encode(s:record)], g:vim_dojo_state_dir . '/' . s:file)
+  let s:records = [{'id': 'quoted-item', 'result': 'recalled', 'time': s:now - 9 * 86400}]
+  for [s:id, s:days] in [['global', 5], ['dot', 4], ['jumplist', 3], ['substitute', 2]]
+    call add(s:records, {'id': s:id, 'technique': s:id, 'result': 'round', 'kind': 'learn',
+          \ 'clean': 9, 'goals': 10, 'passed': v:true, 'seconds': 60, 'time': s:now - s:days * 86400})
   endfor
-  let s:today = vim_dojo#progress#Day(s:now)
+  call add(s:records, extend(copy(s:records[-1]), {'kind': 'review', 'time': s:now - 86400}))
+  for s:index in range(len(s:records))
+    call writefile([json_encode(s:records[s:index])],
+          \ printf('%s/%012d-0000000001-%06d.json', g:vim_dojo_state_dir, s:index + 1, s:index + 1))
+  endfor
   let s:state_now = vim_dojo#progress#State(vim_dojo#drills#Techniques())
-  call assert_equal([1, 2, 1], [s:state_now.quote.box, s:state_now.dot.box, s:state_now.jumplist.box])
-  call assert_equal(3, s:state_now.dot.due - s:today)
-  call assert_equal(1, s:state_now.jumplist.due - s:today)
-  call assert_true(s:state_now.quote.due <= s:today)
-  " The v1 record makes quote due today, so the session reviews it first.
+  call assert_equal([0, 1, 1, 2], map(['quote', 'global', 'dot', 'substitute'], 's:state_now[v:val].box'))
+  call assert_equal(2, s:state_now.substitute.due - vim_dojo#progress#Day(s:now))
+  let s:plan = vim_dojo#progress#Plan(vim_dojo#drills#Techniques())
+  call assert_equal(['global', 'dot', 'jumplist'], map(copy(s:plan.review), 'v:val.id'))
+  call assert_equal([s:first.id], map(copy(s:plan.learn), 'v:val.id'))
+  call assert_equal(['review', 'review', 'review', 'learn'], map(copy(s:plan.rounds), 'v:val.kind'))
   Dojo
-  call assert_match('1 due today', getline(1))
-  call assert_match('review i" a"', getline(search('▶')))
-  call assert_match('◐ i" a"\s\+shaky\s\+due today', join(getline(1, '$'), "\n"))
-  call assert_match('◐ \.\s\+shaky\s\+due in 3 days', join(getline(1, '$'), "\n"))
+  call assert_match('3 due today', getline(1))
+  call assert_match('review :g / \. / Ctrl-O Ctrl-I.*learn ', getline(search('▶')))
   call cursor(search('▶'), 1)
   call feedkeys("\<CR>", 'xt')
-  call assert_match('1/3  ·  Review', s:Panel())
-  call assert_equal('quote', vim_dojo#Task().technique)
-  call assert_notmatch('New technique', s:Panel())
+  call assert_match('Review  Run a command on matching lines  ·  round 1 of 4  ·  1/10', s:Panel())
+  call assert_notmatch('Keys  ', s:Panel())
+  call s:Play(0)
+  call assert_match('Enter / :DojoNext  Next round', s:Panel())
+  call feedkeys("\<CR>", 'xt')
+  call assert_match('Review  Repeat the last change  ·  round 2 of 4  ·  1/10', s:Panel())
+  call assert_notmatch('Last:', s:Panel())
   DojoClose
 
-  " diagnostic-places: recalled at par places a technique; the rest still teach.
+  " diagnostic-places: a clean goal places its technique; the rest still teach.
   let g:vim_dojo_state_dir = s:state . '/diagnostic'
   Dojo
   call feedkeys('d', 'xt')
-  call assert_match('1/\d\+  ·  Diagnostic', s:Panel())
-  call assert_notmatch('New technique\|Hint', s:Panel())
+  call assert_match('Diagnostic  ·  1/\d\+', s:Panel())
+  call assert_notmatch('Keys  \|Hint', s:Panel())
   let s:placed = vim_dojo#Task().technique
   call feedkeys('\h', 'xt')
   call assert_match('No hints', s:Panel())
   call s:Solve()
-  call assert_match('Solved', s:Panel())
-  call assert_equal(1, s:Last().placed)
-  DojoNext
+  call assert_match('Diagnostic  ·  2/\d\+', s:Panel())
+  call assert_match('Last: \d\+ keys · par \d\+ · clean', s:Panel())
   let s:unplaced = vim_dojo#Task().technique
   DojoSkip
   DojoClose
   call vim_dojo#Focus(s:placed)
-  call assert_notmatch('New technique', s:Panel())
+  call assert_match('Review  ', s:Panel())
   call vim_dojo#Focus(s:unplaced)
-  call assert_match('New technique', s:Panel())
+  call assert_match('Learn  ', s:Panel())
   DojoClose
   let s:state_now = vim_dojo#progress#State(vim_dojo#drills#Techniques())
   call assert_equal([3, 0], [s:state_now[s:placed].box, s:state_now[s:unplaced].box])
@@ -306,7 +378,7 @@ try
     set clipboard=unnamedplus
   endif
   DojoFocus global
-  call assert_match('New technique', s:Panel())
+  call assert_match('Learn  :g', s:Panel())
   call assert_notmatch('g/', getreg(':'))
   DojoFocus search
   call assert_equal(['write /dev/null', 'learner search'], [histget(':', -1), histget('/', -1)])
@@ -314,7 +386,7 @@ try
     call assert_equal(s:clip, getreg('+'))
     set clipboard=
   endif
-  call vim_dojo#Start([s:Drill('word-back')])
+  call vim_dojo#Start(s:Round(['word-back']))
   let s:target = vim_dojo#Task().target
   for s:step in range(80)
     if [line('.'), col('.')] == s:target
@@ -322,13 +394,13 @@ try
     endif
     call s:Type("\<Left>")
   endfor
-  call assert_match('Solved', s:Panel())
+  call assert_match('0 of 1 clean', s:Panel())
   call assert_match('Arrow keys', s:Panel())
-  call assert_equal('solved', s:Last().result)
+  call assert_equal('unclean', s:Last().result)
   " A target that is a line is reached from any column.
-  call vim_dojo#Start([s:Drill('file-bottom')])
+  call vim_dojo#Start(s:Round(['file-bottom']))
   call s:Type(repeat('j', 40))
-  call assert_match('Solved', s:Panel())
+  call assert_match('of 1 clean', s:Panel())
   DojoClose
 
   " custom-fields: new fields open with their filetype and cursor and report
@@ -347,21 +419,20 @@ try
         \ 'lines': ['x = "a"'], 'expected': ['x = "b"'], 'hint': 'Inside quotes.',
         \ 'keys': 'ci"b', 'why': 'Quotes.'})], g:vim_dojo_drill_dir . '/clash.json')
   call assert_match('no technique', execute('DojoFocus v2-drill'))
-  call vim_dojo#Start([s:Drill('v2-drill')])
+  call vim_dojo#Start(s:Round(['v2-drill']))
   call assert_equal(['python', [2, 1]], [&l:filetype, [line('.'), col('.')]])
-  call assert_notmatch('New technique', s:Panel())
   call s:Type("f\"ci\"8443\<Esc>")
-  call assert_match('Solved in 10 keys · par 10', s:Panel())
-  call assert_equal(['recalled', 'quote'], [s:Last().result, s:Last().technique])
-  call vim_dojo#Start([s:Drill('custom-rename-variable')])
+  call assert_match('Last: 10 keys · par 10 · clean', s:Panel())
+  call assert_equal(['clean', 'quote'], [s:Last().result, s:Last().technique])
+  call vim_dojo#Start(s:Round(['custom-rename-variable']))
   call s:Type("f\"ci\"b\<Esc>")
-  call assert_match('Solved in 7 keys\.', s:Panel())
-  call assert_equal(['solved', 'quote'], [s:Last().result, s:Last().technique])
+  call assert_match('Last: 7 keys · clean', s:Panel())
+  call assert_equal(['clean', 'quote'], [s:Last().result, s:Last().technique])
   DojoFocus v1-drill
   call assert_equal('alpha', getline(1))
   call s:Type("ciwbeta\<Esc>")
-  call assert_match('Solved in 8 keys\.', s:Panel())
-  call assert_equal('solved', s:Last().result)
+  call assert_match('2/10', s:Panel())
+  call assert_match('Last: 8 keys · clean', s:Panel())
   DojoClose
   Dojo
   call assert_match('^Custom ', getline(search('^Custom ')))
@@ -388,7 +459,7 @@ try
   " A blocked state directory warns, and saving resumes once it clears.
   let g:vim_dojo_state_dir = s:state . '/blocked'
   call writefile(['This file blocks the state directory.'], g:vim_dojo_state_dir)
-  call vim_dojo#Start([s:Drill('quoted-item'), s:Drill('shipping-status')])
+  call vim_dojo#Start(s:Round(['quoted-item', 'shipping-status']))
   DojoSkip
   call assert_match('Progress could not be saved', s:Panel())
   call delete(g:vim_dojo_state_dir)
@@ -398,7 +469,7 @@ try
   DojoClose
 
   " variants-differ and solutions-valid: every drill, and several variants of
-  " every template, solved by typing its own solution, at par and recalled.
+  " every template, solved by typing its own solution, clean at par.
   let g:vim_dojo_state_dir = s:state . '/solutions'
   let s:only = $DOJO_SKILL
   for s:technique in vim_dojo#drills#Techniques()
@@ -419,12 +490,11 @@ try
         call assert_true(s:differs, s:drill.id . ' variants differ')
       endif
       for s:attempt in range(has_key(s:drill, 'vars') ? 4 : 1)
-        call vim_dojo#Start([extend(copy(s:drill), {'phase': 'Test'})])
+        call vim_dojo#Start([{'kind': 'free', 'technique': s:technique.id, 'goals': [s:drill]}])
         let s:task = vim_dojo#Task()
         call s:Solve()
-        call assert_match(printf('Solved in %d keys · par %d', s:task.par, s:task.par), s:Panel(),
+        call assert_match(printf('Last: %d keys · par %d · clean', s:task.par, s:task.par), s:Panel(),
               \ s:drill.id . ' ' . string(get(s:task, 'variant', {})))
-        call assert_equal('recalled', s:Last().result, s:drill.id . ' detected')
       endfor
     endfor
   endfor
@@ -444,17 +514,17 @@ try
     call assert_notmatch('Watch', s:Typed('', '\\h Hint'))
     call s:Typed('x', 'differs')
     call assert_notmatch('differs', s:Typed('\r', 'Item("widget"'))
-    call s:Typed("ci\"ratchet\<Esc>", 'Solved in 11 keys')
-    call s:Typed("\r", '2/3')
+    call s:Typed("ci\"ratchet\<Esc>", 'Last: 11 keys · par 11 · clean')
+    call s:Typed('', '2/10')
     call s:Typed(":DojoFocus jumplist\r", 'loadItems')
     call s:Typed('', '\\h Hint')
     call s:Typed("?^func loadItems\r", 'Found the definition')
-    call s:Typed("\<C-O>", 'Solved')
+    call s:Typed("\<C-O>", 'Last: 18 keys · par 18 · clean')
     " Insert mode at the end of a demo is left, and a typed . there is text.
     call s:Typed(":DojoFocus dot\r", 'Watch')
     call term_sendkeys(s:term, 'i')
     call assert_notmatch('-- INSERT --', s:Typed('', '\\h Hint'))
-    call s:Typed("ciwq.\<BS>ueued\<Esc>jciwqueued\<Esc>jciwqueued\<Esc>", 'This drill practises')
+    call s:Typed("ciwq.\<BS>ueued\<Esc>jciwqueued\<Esc>jciwqueued\<Esc>", 'Last: 34 keys · par 14 · try')
     call term_sendkeys(s:term, ":qa!\r")
     call term_wait(s:term, 100)
     execute 'bwipeout!' s:term

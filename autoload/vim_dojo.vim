@@ -6,12 +6,16 @@ let s:pseudo_keys = ['<CursorHold>', '<Ignore>', '<FocusGained>', '<FocusLost>',
 " register goes last so it points where it pointed before.
 let s:registers = split('0123456789abcdefghijklmnopqrstuvwxyz-/', '\zs') + ['"']
 
+" A goal is clean when it is solved without a hint in at most par plus this
+" many keys, and a round is passed with this many clean goals in ten.
+let s:margin = 2
+let s:pass = 8
+
 " Resumes a session in progress; otherwise opens the skill map.
 function! vim_dojo#Dojo() abort
-  if !empty(s:session) && !get(s:session, 'done', 1)
-        \ && (s:WindowExists('edit') || s:WindowExists('panel'))
+  if has_key(s:session, 'rounds') && (s:WindowExists('edit') || s:WindowExists('panel'))
     let had_edit = s:Open()
-    if !had_edit && empty(s:session.result)
+    if !had_edit && !s:session.summary
       call s:StopDemo()
       call s:Reset()
     else
@@ -22,16 +26,18 @@ function! vim_dojo#Dojo() abort
   call vim_dojo#map#Open()
 endfunction
 
-function! vim_dojo#Start(plan, ...) abort
+" Runs rounds one after another. A round is {'kind', 'technique', 'goals'}:
+" kind is learn, review, diagnostic, or free, and goals is a list of drills.
+function! vim_dojo#Start(rounds) abort
   call s:StopDemo()
   let techniques = {}
   for technique in vim_dojo#drills#Techniques()
     let techniques[technique.id] = technique
   endfor
   call s:Open()
-  call extend(s:session, {'plan': a:plan, 'kind': get(a:, 1, 'session'), 'techniques': techniques,
-        \ 'index': 0, 'results': [], 'warning': '', 'done': 0, 'placed': 0, 'demo': {}, 'running': 0})
-  call s:OpenTask()
+  call extend(s:session, {'rounds': a:rounds, 'r': -1, 'techniques': techniques,
+        \ 'warning': '', 'demo': {}, 'running': 0})
+  call s:OpenRound()
 endfunction
 
 function! vim_dojo#Focus(id) abort
@@ -40,7 +46,7 @@ function! vim_dojo#Focus(id) abort
     echohl ErrorMsg | echo 'Vim Dojo has no technique called ' . a:id | echohl None
     return
   endif
-  call vim_dojo#Start(vim_dojo#progress#Focus(matches[0]), 'focus')
+  call vim_dojo#Start([vim_dojo#progress#Focus(matches[0])])
 endfunction
 
 function! vim_dojo#Free() abort
@@ -48,12 +54,11 @@ function! vim_dojo#Free() abort
   for technique in vim_dojo#drills#Techniques()
     call extend(drills, technique.drills)
   endfor
-  let drill = drills[rand() % len(drills)]
-  call vim_dojo#Start([extend(copy(drill), {'phase': 'Free practice · ' . drill.id})], 'free')
+  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [drills[rand() % len(drills)]]}])
 endfunction
 
 function! vim_dojo#Diagnostic() abort
-  call vim_dojo#Start(vim_dojo#progress#Diagnostic(vim_dojo#drills#Techniques()), 'diagnostic')
+  call vim_dojo#Start([vim_dojo#progress#Diagnostic(vim_dojo#drills#Techniques())])
 endfunction
 
 " The drill being practised, as the test suite and any tooling can read it.
@@ -144,7 +149,7 @@ function! s:Capture() abort
 endfunction
 
 function! s:Listening() abort
-  return !empty(s:session) && has_key(s:session, 'log') && empty(s:session.result)
+  return !empty(s:session) && has_key(s:session, 'log') && !s:session.summary
         \ && !s:session.running && empty(s:session.demo) && bufnr('%') == s:session.edit_buf
 endfunction
 
@@ -184,18 +189,27 @@ function! s:Streams() abort
   return streams
 endfunction
 
+" The first goal of a technique's first learn round is demonstrated before
+" it is handed over.
+function! s:OpenRound() abort
+  let s:session.r += 1
+  let round = s:session.rounds[s:session.r]
+  let technique = get(s:session.techniques, round.technique, {})
+  let first = round.kind ==# 'learn' && !empty(technique)
+        \ && !vim_dojo#progress#State([technique])[technique.id].rounds
+  call extend(s:session, {'round': round, 'technique': technique, 'index': 0, 'results': [],
+        \ 'summary': 0, 'last': '', 'round_started': localtime(), 'demo_first': first})
+  call s:OpenTask()
+endfunction
+
 function! s:OpenTask() abort
   call s:StopDemo()
-  let task = vim_dojo#drills#Instance(s:session.plan[s:session.index])
+  let task = vim_dojo#drills#Instance(s:session.round.goals[s:session.index])
   call extend(s:session, {'task': task, 'attempt': vim_dojo#progress#Attempt(),
-        \ 'assisted': 0, 'result': '', 'card': [], 'step': 0, 'hint': 0, 'feedback': []})
+        \ 'hinted': 0, 'step': 0, 'hint': 0, 'feedback': []})
   call s:Save('started')
   call s:Prepare()
-  let technique = get(s:session.techniques, get(task, 'technique', ''), {})
-  if s:session.kind !=# 'diagnostic' && has_key(task, 'tokens') && !get(task, 'custom') && has_key(technique, 'card')
-        \ && !vim_dojo#progress#State([technique])[technique.id].box
-    let s:session.card = [printf('New technique  %s  ·  %s', technique.keys, technique.name)]
-          \ + technique.card + ['']
+  if s:session.demo_first && s:session.index == 0 && has_key(task, 'tokens') && !get(task, 'custom')
     call s:Demo()
   else
     call s:Reset()
@@ -358,7 +372,7 @@ function! s:Auto() abort
     return
   endif
   let now = s:Now()
-  if now ==# s:session.seen || !empty(s:session.result) || !s:WindowExists('panel')
+  if now ==# s:session.seen || s:session.summary || !s:WindowExists('panel')
     return
   endif
   let edited = now[0] != s:session.seen[0]
@@ -453,29 +467,29 @@ function! vim_dojo#Action(action) abort
     call vim_dojo#Dojo()
     return
   endif
-  if s:session.done
-    if a:action ==# 'check' || a:action ==# 'next'
-      call s:Close()
-      call vim_dojo#map#Open()
-    endif
-    return
-  endif
   call win_gotoid(s:session.edit)
-  if !empty(s:session.demo) && a:action !=# 'skip'
-    " Any dojo key during a demo ends it and hands the drill over.
+  if s:session.summary
+    if a:action ==# 'check' || a:action ==# 'next'
+      if s:session.r + 1 < len(s:session.rounds)
+        call s:OpenRound()
+      else
+        call s:Close()
+        call vim_dojo#map#Open()
+      endif
+    endif
+  elseif !empty(s:session.demo) && a:action !=# 'skip'
+    " Any dojo key during a demo ends it and hands the goal over.
     call s:StopDemo()
     call s:Reset()
-  elseif a:action ==# 'check' && empty(s:session.result)
+  elseif a:action ==# 'check'
     call s:Check(1)
-  elseif a:action ==# 'hint' && empty(s:session.result)
+  elseif a:action ==# 'hint'
     call s:Hint()
-  elseif a:action ==# 'reset' && empty(s:session.result)
+  elseif a:action ==# 'reset'
     call s:Reset()
-  elseif a:action ==# 'skip' || !empty(s:session.result) && index(['next', 'check'], a:action) >= 0
-    if empty(s:session.result)
-      call s:Save('skipped', s:session.kind ==# 'diagnostic' ? {'diagnostic': 1} : {})
-    endif
-    call s:Advance()
+  elseif a:action ==# 'skip'
+    call s:Save('skipped')
+    call s:Finish(0, -1)
   endif
 endfunction
 
@@ -525,33 +539,64 @@ function! s:Check(report) abort
   endif
 endfunction
 
+" Which keys were used does not matter, only how many. A goal with no par,
+" a custom drill without a solution, is clean when solved without a hint.
 function! s:Solved() abort
   let task = s:session.task
-  let technique = get(s:session.techniques, get(task, 'technique', ''), {})
-  let streams = s:Streams()
-  let typed = map(copy(s:session.log), 'v:val[1]')
-  let result = s:session.assisted ? 'assisted'
-        \ : has_key(task, 'tokens') && vim_dojo#drills#Detect(technique, streams) ? 'recalled' : 'solved'
-  let extra = {'keys': len(typed), 'seconds': localtime() - s:session.started}
-  if s:session.kind ==# 'diagnostic'
-    let extra.diagnostic = 1
-    if result ==# 'recalled' && len(typed) <= get(task, 'par', 0) + 2
-      let extra.placed = 1
-      let s:session.placed += 1
-    endif
+  let keys = len(s:session.log)
+  let clean = !s:session.hinted && keys <= get(task, 'par', keys) + s:margin
+  call s:Save(clean ? 'clean' : 'unclean', {'keys': keys, 'seconds': localtime() - s:session.started})
+  if clean && s:session.round.kind ==# 'diagnostic'
+    call s:Write({'id': task.id, 'technique': task.technique, 'result': 'placed'})
   endif
-  call s:Save(result, extra)
-  let feedback = [has_key(task, 'par') ? printf('Solved in %d keys · par %d', len(typed), task.par)
-        \ : printf('Solved in %d keys.', len(typed))]
-  call add(feedback, 'You: ' . vim_dojo#drills#Show(len(typed) > 40 ? typed[: 39] + ['…'] : typed))
-  if has_key(task, 'tokens')
-    call add(feedback, 'Try: ' . vim_dojo#drills#Show(task.tokens))
+  call s:Finish(clean, keys)
+endfunction
+
+" Moves on to the next goal with no key pressed, or after the last one to
+" the round's summary. Keys of -1 means the goal was skipped.
+function! s:Finish(clean, keys) abort
+  let task = s:session.task
+  let entry = {'clean': a:clean, 'keys': a:keys, 'par': get(task, 'par', -1), 'hinted': s:session.hinted,
+        \ 'goal': task.goal, 'solution': has_key(task, 'tokens') ? vim_dojo#drills#Show(task.tokens) : task.keys,
+        \ 'technique': get(task, 'technique', ''),
+        \ 'advice': a:clean || a:keys < 0 ? [] : s:Advice(s:Streams())}
+  call add(s:session.results, entry)
+  let s:session.last = 'Last: ' . s:Outcome(entry)
+  let s:session.index += 1
+  if s:session.index < len(s:session.round.goals)
+    call s:OpenTask()
+  else
+    call s:EndRound()
   endif
-  if result ==# 'solved' && has_key(technique, 'detect')
-    call add(feedback, printf('This drill practises %s (%s).', technique.keys, tolower(technique.name)))
+endfunction
+
+" How a goal went: keys against par, and the par solution if not clean.
+function! s:Outcome(entry) abort
+  let parts = [a:entry.keys < 0 ? 'skipped' : printf('%d keys', a:entry.keys)]
+  if a:entry.par >= 0
+    call add(parts, 'par ' . a:entry.par)
   endif
-  call extend(feedback, s:Advice(streams) + [task.why])
-  let s:session.feedback = feedback
+  if a:entry.hinted
+    call add(parts, 'hint')
+  endif
+  call add(parts, a:entry.clean ? 'clean' : 'try ' . a:entry.solution)
+  return join(parts, ' · ')
+endfunction
+
+" A learn or review round leaves a record that schedules its technique.
+" Leaving a round early leaves none, so it changes no schedule.
+function! s:EndRound() abort
+  let round = s:session.round
+  let clean = len(filter(copy(s:session.results), 'v:val.clean'))
+  let goals = len(s:session.results)
+  let s:session.passed = clean * 10 >= s:pass * goals
+  let s:session.seconds = localtime() - s:session.round_started
+  if index(['learn', 'review'], round.kind) >= 0
+    call s:Write({'id': round.technique, 'technique': round.technique, 'result': 'round',
+          \ 'kind': round.kind, 'clean': clean, 'goals': goals, 'passed': s:session.passed,
+          \ 'seconds': s:session.seconds})
+  endif
+  let s:session.summary = 1
   setlocal nomodifiable
   call s:Render()
 endfunction
@@ -579,28 +624,22 @@ function! s:Diff(actual, expected) abort
   return []
 endfunction
 
-" Clue, then keys, then the demo.
+" The keys, then the demo. Any hint makes the goal not clean.
 function! s:Hint() abort
   let task = s:session.task
-  if s:session.kind ==# 'diagnostic'
-    let s:session.feedback = ['No hints in the diagnostic. Skip a drill you do not know.']
+  if s:session.round.kind ==# 'diagnostic'
+    let s:session.feedback = ['No hints in the diagnostic. Skip a goal you do not know.']
     call s:Render()
     return
   endif
-  let s:session.assisted = 1
+  let s:session.hinted = 1
   let s:session.hint += 1
-  if s:session.step > 0
-    let hint = s:session.hint == 1 ? 'Vim keeps a list of the places you jump from.' : 'Press Ctrl-O.'
-  elseif s:session.hint == 1
-    let hint = task.hint
-  elseif s:session.hint == 2 || !has_key(task, 'tokens') || get(task, 'custom')
-    let hint = has_key(task, 'tokens') ? vim_dojo#drills#Show(task.tokens) : task.keys
+  if s:session.hint == 1 || !has_key(task, 'tokens') || get(task, 'custom')
+    let s:session.feedback = ['Hint  ' . (has_key(task, 'tokens') ? vim_dojo#drills#Show(task.tokens) : task.keys)]
+    call s:Render()
   else
     call s:Demo()
-    return
   endif
-  let s:session.feedback = ['Hint  ' . hint]
-  call s:Render()
 endfunction
 
 " Shows the solution being typed. Every frame is worked out first, so the
@@ -666,65 +705,88 @@ function! s:StopDemo() abort
   endif
 endfunction
 
+" Records the current goal under its attempt name.
 function! s:Save(result, ...) abort
   let task = s:session.task
-  if a:result !=# 'started'
-    let s:session.result = a:result
-  endif
   let record = extend({'id': task.id, 'result': a:result}, get(a:, 1, {}))
   if has_key(task, 'technique')
     let record.technique = task.technique
   endif
-  let saved = vim_dojo#progress#Record(s:session.attempt, record)
+  call s:Write(record, s:session.attempt)
+endfunction
+
+function! s:Write(record, ...) abort
+  let saved = vim_dojo#progress#Record(a:0 ? a:1 : vim_dojo#progress#Attempt(), a:record)
   let s:session.warning = saved ? '' : 'Progress could not be saved to disk.'
 endfunction
 
-function! s:Advance() abort
-  call add(s:session.results, s:session.result)
-  let s:session.index += 1
-  if s:session.index < len(s:session.plan)
-    call s:OpenTask()
-  else
-    let s:session.done = 1
-    setlocal nomodifiable
-    call s:Render()
+function! s:Title() abort
+  let kind = s:session.round.kind
+  let technique = s:session.technique
+  let title = kind ==# 'learn' ? 'Learn  ' . technique.keys
+        \ : kind ==# 'review' ? 'Review  ' . technique.name
+        \ : kind ==# 'diagnostic' ? 'Diagnostic' : 'Free practice'
+  if len(s:session.rounds) > 1
+    let title .= printf('  ·  round %d of %d', s:session.r + 1, len(s:session.rounds))
   endif
+  return 'Vim Dojo  ·  ' . title
+endfunction
+
+" How many goals were clean, the time taken, each goal that was not clean
+" with its par solution, and the first long way round, said once.
+function! s:Summary() abort
+  let results = s:session.results
+  let clean = len(filter(copy(results), 'v:val.clean'))
+  let kind = s:session.round.kind
+  let lines = [s:Title() . '  ·  done', '', s:session.last, '',
+        \ printf('%d of %d clean  ·  %d:%02d', clean, len(results), s:session.seconds / 60, s:session.seconds % 60)
+        \ . (index(['learn', 'review'], kind) < 0 ? '' : s:session.passed ? '  ·  passed'
+        \   : printf('  ·  not passed, %d clean in ten passes', s:pass))]
+  if kind ==# 'diagnostic'
+    let placed = len(uniq(sort(map(filter(copy(results), 'v:val.clean'), 'v:val.technique'))))
+    call add(lines, printf('%d %s placed as already known. The rest are taught as you meet them.',
+          \ placed, placed == 1 ? 'technique' : 'techniques'))
+  endif
+  let missed = filter(map(copy(results), {index, entry -> entry.clean ? ''
+        \ : printf('  %d. %s  %s', index + 1, entry.goal, s:Outcome(entry))}), '!empty(v:val)')
+  if !empty(missed)
+    call extend(lines, ['', 'Not clean:'] + missed)
+  endif
+  let advice = filter(map(copy(results), 'v:val.advice'), '!empty(v:val)')
+  if !empty(advice)
+    call extend(lines, [''] + advice[0])
+  endif
+  let next = s:session.r + 1 < len(s:session.rounds) ? 'Next round' : 'Skill map     :DojoClose  Return to your work'
+  return lines + ['', 'Enter / :DojoNext  ' . next]
 endfunction
 
 function! s:Render() abort
-  let total = len(s:session.plan)
-  let diagnostic = s:session.kind ==# 'diagnostic'
-  if s:session.done
-    let solved = total - count(s:session.results, 'skipped')
-    let recalled = count(s:session.results, 'recalled')
-    let lines = ['Vim Dojo  ·  ' . (diagnostic ? 'Diagnostic' : 'Session') . ' complete', '',
-          \ printf('%d of %d solved  ·  %d recalled on your own', solved, total, recalled), '']
-    if diagnostic
-      call add(lines, printf('%d %s placed as already known. The rest are taught as you meet them.',
-            \ s:session.placed, s:session.placed == 1 ? 'technique' : 'techniques'))
-    else
-      call add(lines, s:session.task.why)
-    endif
-    call extend(lines, ['', 'Enter / :DojoNext  Skill map     :DojoClose  Return to your work'])
+  if s:session.summary
+    let lines = s:Summary()
   else
     let task = s:session.task
+    let technique = s:session.technique
     let goal = s:session.step > 0 ? 'Return to the original call.' : task.goal
-    let lines = [printf('Vim Dojo  ·  %d/%d  ·  %s', s:session.index + 1, total, task.phase), '']
-          \ + s:session.card + [goal, '']
+    let lines = [printf('%s  ·  %d/%d', s:Title(), s:session.index + 1, len(s:session.round.goals)), '']
+    if s:session.round.kind ==# 'learn'
+      " A learn round keeps the technique's keys in view for every goal.
+      call extend(lines, [printf('Keys  %s  ·  %s', technique.keys, technique.name)]
+            \ + get(technique, 'card', []) + [''])
+    endif
+    if !empty(s:session.last)
+      call extend(lines, [s:session.last, ''])
+    endif
+    call extend(lines, [goal, ''])
     let demo = s:session.demo
     if !empty(demo)
       call add(lines, 'Watch  ' . vim_dojo#drills#Show(task.tokens[: demo.shown - 1]))
-      call add(lines, 'The drill is yours when the demo ends.')
+      call add(lines, 'The goal is yours when the demo ends.')
     else
       call extend(lines, s:session.feedback)
-      if !empty(s:session.result)
-        call add(lines, 'Enter / :DojoNext  Continue')
-      else
-        let leader = keytrans(get(g:, 'maplocalleader', '\'))
-        call add(lines, diagnostic
-              \ ? printf('%ss Skip   :DojoClose  Stop the diagnostic', leader)
-              \ : printf('%sh Hint   %sr Reset   %ss Skip   :DojoClose', leader, leader, leader))
-      endif
+      let leader = keytrans(get(g:, 'maplocalleader', '\'))
+      call add(lines, s:session.round.kind ==# 'diagnostic'
+            \ ? printf('%ss Skip   :DojoClose  Stop the diagnostic', leader)
+            \ : printf('%sh Hint   %sr Reset   %ss Skip   :DojoClose', leader, leader, leader))
     endif
   endif
   if !empty(s:session.warning)
@@ -738,11 +800,11 @@ function! s:Render() abort
   call setbufvar(buf, '&modifiable', 0)
   let height = min([len(lines) + 1, max([3, &lines / 2])])
   call win_execute(s:session.panel, 'resize ' . height . ' | normal! gg0')
-  " Enter is mapped only while there is something to continue from. Until
-  " then it is not ours, so it stays whatever the learner has it set to.
-  " ponytail: a learner <buffer> <CR> map is lost once we map over it on
-  " solve; save and mapset() it back if that ever matters.
-  let ours = !empty(s:session.result) || s:session.done
+  " Enter is mapped only on a round's summary. Until then it is not ours, so
+  " it stays whatever the learner has it set to.
+  " ponytail: a learner <buffer> <CR> map is lost once we map over it at a
+  " summary; save and mapset() it back if that ever matters.
+  let ours = s:session.summary
   for win in [s:session.edit, s:session.panel]
     " A list, not '|': :nunmap would swallow '| endif' as part of the lhs.
     call win_execute(win, ours ? 'nnoremap <buffer> <silent> <CR> <Cmd>DojoNext<CR>'

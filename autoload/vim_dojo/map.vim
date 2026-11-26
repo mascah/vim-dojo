@@ -48,12 +48,12 @@ function! s:Draw(initial) abort
   let today = vim_dojo#progress#Day(localtime())
   let [inbox_dir, inbox] = vim_dojo#progress#Inbox()
   let due = len(filter(copy(techniques), {_, t -> state[t.id].box && state[t.id].due <= today}))
-  let focus = b:dojo_plan.drills[-1]
+  let planned = map(b:dojo_plan.review + b:dojo_plan.learn, {_, t -> t.id})
   let by_skill = {}
   for technique in techniques
     let by_skill[technique.skill] = add(get(by_skill, technique.skill, []), technique)
     if a:initial && (s:Level(state[technique.id]) == 1 || state[technique.id].box && state[technique.id].due <= today
-          \ || technique.id ==# get(focus, 'technique', focus.id))
+          \ || index(planned, technique.id) >= 0)
       let b:dojo_open[technique.skill] = 1
     endif
   endfor
@@ -66,15 +66,12 @@ function! s:Draw(initial) abort
   if vim_dojo#progress#Fresh()
     call add(rows, ['  New here? Press d for a short diagnostic, or Enter to start at the beginning.', {}])
   endif
-  let names = {}
-  for technique in techniques
-    let names[technique.id] = technique.keys
-  endfor
   let parts = []
-  if !empty(b:dojo_plan.review)
-    call add(parts, 'review ' . join(map(copy(b:dojo_plan.review), {_, t -> t.keys}), ' / '))
-  endif
-  call add(parts, (empty(b:dojo_plan.learn) ? 'practise ' : 'learn ') . names[get(focus, 'technique', focus.id)])
+  for [kind, members] in [['review', b:dojo_plan.review], ['learn', b:dojo_plan.learn]]
+    if !empty(members)
+      call add(parts, kind . ' ' . join(map(copy(members), {_, t -> t.keys}), ' / '))
+    endif
+  endfor
   call add(rows, [strcharpart(printf('  ▶ %-29s%s', 'Start today''s session', join(parts, '  ·  ')), 0, 80),
         \ {'session': 1}])
   call add(rows, ['', {}])
@@ -112,9 +109,9 @@ endfunction
 function! s:Enter() abort
   let row = get(b:dojo_rows, line('.') - 1, {})
   if has_key(row, 'session')
-    let plan = b:dojo_plan.drills
+    let rounds = b:dojo_plan.rounds
     call s:Leave()
-    call vim_dojo#Start(plan, 'session')
+    call vim_dojo#Start(rounds)
   elseif has_key(row, 'skill')
     let b:dojo_open[row.skill] = !get(b:dojo_open, row.skill)
     call s:Draw(0)

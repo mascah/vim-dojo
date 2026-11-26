@@ -112,19 +112,10 @@ function! vim_dojo#drills#Show(tokens) abort
   return join(map(copy(a:tokens), {_, token -> token ==# '<lt>' ? '<' : token =~# '^\%( \|<Space>\)$' ? '␣' : token}))
 endfunction
 
-" A technique is detected when every stream it names matches its pattern:
-" n holds keys typed outside Insert mode, i the keys typed in Insert mode, and
-" c each finished command line, one per line, prefixed with : / or ?. In n
-" and i, and in their patterns, a key name such as <Left> stands for one
-" character, so a pattern like [wbe] cannot match the e inside it.
-function! vim_dojo#drills#Detect(technique, streams) abort
-  let detect = get(a:technique, 'detect', {})
-  return !empty(detect) && empty(filter(copy(detect), {kind, pattern -> a:streams[kind]
-        \ !~# (kind ==# 'c' ? pattern : vim_dojo#drills#Code(pattern))}))
-endfunction
-
 let s:codes = {}
 
+" Turns each key name such as <Left> into one character, so a pattern like
+" [hjkl] over typed keys cannot match the l inside it.
 function! vim_dojo#drills#Code(text) abort
   return substitute(a:text, '<[A-Za-z][-A-Za-z0-9]*>', '\=s:Code(submatch(0))', 'g')
 endfunction
@@ -156,7 +147,8 @@ function! s:Custom(techniques) abort
       if type(task) != v:t_dict
         throw 'Not an object'
       endif
-      let required = ['id', 'goal', 'hint', 'why'] + (has_key(task, 'solution') ? [] : ['keys'])
+      " v2 files also carry hint and why, which are no longer shown.
+      let required = ['id', 'goal'] + (has_key(task, 'solution') ? [] : ['keys'])
       for field in required + ['keys', 'ft', 'start', 'skill', 'technique', 'solution', 'target']
         if (index(required, field) >= 0 || has_key(task, field)) && (type(get(task, field)) != v:t_string
               \ || empty(task[field]) || task[field] =~# '[[:cntrl:]]')
@@ -183,7 +175,7 @@ function! s:Custom(techniques) abort
         throw 'Expected buffer must differ'
       endif
       let clean = {'custom': 1, 'ft': 'text', 'skill': index(skills, get(task, 'skill')) >= 0 ? task.skill : 'custom'}
-      for field in ['id', 'goal', 'hint', 'why', 'keys', 'lines', 'expected', 'ft', 'start', 'technique', 'solution', 'target']
+      for field in ['id', 'goal', 'keys', 'lines', 'expected', 'ft', 'start', 'technique', 'solution', 'target']
         if has_key(task, field)
           let clean[field] = task[field]
         endif
