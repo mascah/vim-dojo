@@ -7,11 +7,11 @@ TAX_RATES = {"CA": Decimal("0.0725"), "NY": Decimal("0.04"), "TX": Decimal("0.06
 @dataclass
 class LineItem:
     sku: str
-    quantity: int
+    quantity: int  # never negative
     unit_price: Decimal
 
     def subtotal(self) -> Decimal:
-        return self.unit_price * self.quantity
+        return self.unit_price * self.quantity  # before tax
 
 
 @dataclass
@@ -25,7 +25,7 @@ class Invoice:
 
     def total(self) -> Decimal:
         net = sum((item.subtotal() for item in self.items), Decimal("0"))
-        rate = TAX_RATES.get(self.state, Decimal("0"))
+        rate = TAX_RATES.get(self.state, Decimal("0"))  # unknown states pay none
         return (net * (1 + rate)).quantize(Decimal("0.01"))
 
 

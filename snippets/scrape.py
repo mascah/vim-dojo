@@ -16,18 +16,18 @@ class LinkCollector(HTMLParser):
             return
         for name, value in attrs:
             if name == "href" and value and not value.startswith("#"):
-                self.links.append(value)
+                self.links.append(value)  # relative links kept as is
 
 
 def fetch(url: str, timeout: float = 10.0) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "link-report/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "link-report/1.0"})  # some sites block the default
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
 
 
 def main(urls):
     writer = csv.writer(sys.stdout)
-    writer.writerow(["page", "link"])
+    writer.writerow(["page", "link"])  # header row
     for url in urls:
         collector = LinkCollector()
         collector.feed(fetch(url))

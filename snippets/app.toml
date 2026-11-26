@@ -6,17 +6,17 @@ environment = "production"
 
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 8080  # behind the load balancer
 read_timeout = "15s"
 write_timeout = "30s"
 
 [database]
 url = "postgres://orders@db.internal:5432/orders"
-max_connections = 20
+max_connections = 20  # per instance
 statement_timeout = "5s"
 
 [log]
-level = "info"
+level = "info"  # debug in staging
 format = "json"
 file = "/var/log/orders/service.log"
 

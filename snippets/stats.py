@@ -9,13 +9,13 @@ def summarize(latencies_ms: list[float]) -> dict[str, float]:
         "count": count,
         "mean": round(statistics.fmean(ordered), 2),
         "median": statistics.median(ordered),
-        "p95": ordered[int(count * 0.95) - 1],
+        "p95": ordered[int(count * 0.95) - 1],  # nearest rank
         "max": ordered[-1],
     }
 
 
 def top_paths(log_lines: list[str], limit: int = 5) -> list[tuple[str, int]]:
-    paths = Counter()
+    paths = Counter()  # path -> hits
     for line in log_lines:
         method, path, status = line.split()[:3]
         if status.startswith("2"):
@@ -24,7 +24,7 @@ def top_paths(log_lines: list[str], limit: int = 5) -> list[tuple[str, int]]:
 
 
 if __name__ == "__main__":
-    sample = [12.5, 18.0, 9.75, 31.2, 14.0, 22.8, 11.1, 95.4, 16.3, 13.9]
+    sample = [12.5, 18.0, 9.75, 31.2, 14.0, 22.8, 11.1, 95.4, 16.3, 13.9]  # milliseconds
     report = summarize(sample)
     for key in ("count", "mean", "median", "p95", "max"):
         print(f"{key:>6}: {report[key]}")

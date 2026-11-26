@@ -2,7 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-STORE = Path.home() / ".tasks.json"
+STORE = Path.home() / ".tasks.json"  # one file per user
 
 
 def load() -> list[dict]:
@@ -12,7 +12,7 @@ def load() -> list[dict]:
 
 
 def save(tasks: list[dict]) -> None:
-    STORE.write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+    STORE.write_text(json.dumps(tasks, indent=2), encoding="utf-8")  # human readable
 
 
 def main() -> None:

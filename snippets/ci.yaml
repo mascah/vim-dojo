@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: ["1.22", "1.23"]
+        go: ["1.22", "1.23"]  # oldest supported first
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -19,14 +19,14 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 ./...  # no cached results
         env:
           DATABASE_URL: "postgres://test:test@localhost:5432/test?sslmode=disable"
       - name: Build
         run: go build -o bin/server ./cmd/server
     services:
       postgres:
-        image: "postgres:16"
+        image: "postgres:16"  # match production
         env:
           POSTGRES_USER: "test"
           POSTGRES_PASSWORD: "test"

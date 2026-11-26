@@ -6,7 +6,7 @@ metadata:
     app: checkout
     team: "payments"
 spec:
-  replicas: 3
+  replicas: 3  # one per zone
   selector:
     matchLabels:
       app: checkout
@@ -30,10 +30,10 @@ spec:
                   key: "url"
           resources:
             requests:
-              cpu: "250m"
+              cpu: "250m"  # a quarter of a core
               memory: "256Mi"
             limits:
-              memory: "512Mi"
+              memory: "512Mi"  # killed above this
           readinessProbe:
             httpGet:
               path: "/healthz"
