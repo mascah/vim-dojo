@@ -560,7 +560,9 @@ try
   call assert_match('Arrow keys', s:Panel())
   call assert_equal('unclean', s:Last().result)
   " A target that is a line is reached from any column.
-  call vim_dojo#Start(s:Round(['file-bottom']))
+  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [{'id': 'file-bottom', 'line': 1, 'ft': 'python',
+        \ 'start': 'import', 'lines': ['import json', '', 'def load(path):', '    pass', '', 'load(None)'],
+        \ 'goal': 'Move to the last line of the file.', 'solution': 'G'}]}])
   call s:Type(repeat('j', 40))
   call assert_match('of 1 clean', s:Panel())
   DojoClose

@@ -10,6 +10,11 @@ let s:registers = split('0123456789abcdefghijklmnopqrstuvwxyz-/', '\zs') + ['"']
 " many keys, and a round is passed with this many clean goals in ten.
 let s:margin = 2
 let s:pass = 8
+" Ctrl-D and Ctrl-U move by 'scroll', which Vim resets to half the window
+" whenever it resizes, as the panel does. Set again before each key the
+" learner types, and before playing a solution, a scroll goal's target does
+" not depend on the window's size.
+let s:scroll = 8
 
 " Resumes a session in progress; otherwise opens the skill map.
 function! vim_dojo#Dojo() abort
@@ -166,6 +171,7 @@ function! s:Key(key, typed) abort
   let s:last_key = reltime()
   if (!empty(a:typed) || waited) && index(s:pseudo_keys, a:key) < 0 && s:Listening()
     call add(s:session.log, [s:modes[-1], a:key])
+    let &l:scroll = s:scroll
   endif
 endfunction
 
@@ -435,6 +441,8 @@ function! s:Load() abort
   endif
   setlocal nomodified nofoldenable
   call cursor(task.position[0], task.position[1])
+  let &l:scroll = s:scroll
+  normal! zz
 endfunction
 
 function! s:Fill(lines) abort
@@ -524,7 +532,6 @@ function! s:Reset() abort
   call s:Load()
   " A command line that never reported leaving cannot skew later drills.
   let s:modes = ['n']
-  normal! zz
   clearjumps
   call extend(s:session, {'step': 0, 'hint': 0, 'feedback': [], 'log': [], 'commands': [],
         \ 'started': localtime()})

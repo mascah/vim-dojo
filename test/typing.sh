@@ -70,6 +70,13 @@ tmux send-keys -t "$session" ciwqueued
 slowly Escape j . j .
 check dot-still-one 'Last: 14 keys · par 14 · clean'
 
+# scroll-pinned: Ctrl-D moves the pinned eight lines whatever the window's
+# height, after the panel has resized.
+tmux send-keys -t "$session" ":call Goal({'id': 'scroll', 'ft': 'text', 'start': 'row 5', 'goal': 'Scroll down.', 'lines': map(range(1, 60), '\"row \" . v:val'), 'solution': '<C-D>'})" Enter
+check scroll-pinned 'Scroll down'
+slowly C-d
+check scroll-pinned 'Last: 1 keys · par 1 · clean'
+
 tmux send-keys -t "$session" ':qa!' Enter
 [ "$failed" = 0 ] && echo 'typing check passed'
 exit "$failed"
