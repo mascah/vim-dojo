@@ -40,6 +40,14 @@ function! s:Round(ids, ...) abort
   return [{'kind': get(a:, 1, 'free'), 'technique': get(goals[0], 'technique', ''), 'goals': goals}]
 endfunction
 
+" Opens a lesson's round, reading past its page if it shows one.
+function! s:Focus(id) abort
+  execute 'DojoFocus' a:id
+  if s:Panel() =~# '·  page'
+    DojoNext
+  endif
+endfunction
+
 function! s:Box(id) abort
   return vim_dojo#progress#State(vim_dojo#drills#Techniques())[a:id]
 endfunction
@@ -251,7 +259,9 @@ try
 
   " teach-first-meeting, demo-not-counted, highlight, auto-check, no-f-keys.
   call vim_dojo#Start(s:Round(['quoted-item', 'quoted-item'], 'learn'))
-  call assert_match('Keys  i" a"', s:Panel())
+  call assert_match('·  page', s:Panel())
+  DojoNext
+  call assert_match('Keys  ci"  change inside the quotes', s:Panel())
   call assert_equal(s:Drill('quoted-item').lines, getline(1, '$'))
   call assert_equal('w', strpart(getline('.'), col('.') - 1, 1))
   call assert_equal(repeat([''], 6), map(['<F5>', '<F6>', '<F7>', '<F8>', '<F9>', '<CR>'], 'maparg(v:val, "n")'))
@@ -384,7 +394,7 @@ try
   call assert_match('Free practice  ·  1/1', s:Panel())
   call assert_equal(0, exists(':DojoUsed'))
   DojoClose
-  DojoFocus quote
+  call s:Focus('quote')
   for s:index in range(10)
     call assert_equal('quote', vim_dojo#Task().technique)
     call assert_match(printf('Review  i" a"  ·  %d/10', s:index + 1), s:Panel())
@@ -397,25 +407,25 @@ try
   " box-by-round and learn-pass, by playing rounds on a fresh state.
   let g:vim_dojo_state_dir = s:state . '/rounds'
   let s:today = vim_dojo#progress#Day(localtime())
-  DojoFocus dot
+  call s:Focus('dot')
   call s:Play(7)
   call assert_match('7 of 10 clean.*not passed: 8 of 10 clean passes', s:Panel())
   call assert_equal(0, s:Box('dot').box)
-  DojoFocus dot
+  call s:Focus('dot')
   call assert_match('Learn', s:Panel())
   call s:Play(8)
   call assert_equal([1, s:today + 1], [s:Box('dot').box, s:Box('dot').due])
-  DojoFocus dot
+  call s:Focus('dot')
   call assert_match('Review  \.  ·  1/10', s:Panel())
   call assert_notmatch('Keys  ', s:Panel())
   call s:Play(8)
   call assert_equal([2, s:today + 3], [s:Box('dot').box, s:Box('dot').due])
-  DojoFocus dot
+  call s:Focus('dot')
   call s:Play(7)
   call assert_equal([1, s:today + 1], [s:Box('dot').box, s:Box('dot').due])
   " Left early: the goals done stay in the record and nothing moves.
   let s:clean = len(filter(s:Records(), 'v:val.result ==# "clean"'))
-  DojoFocus dot
+  call s:Focus('dot')
   call s:Solve()
   call s:Solve()
   DojoClose
@@ -538,10 +548,10 @@ try
   if has('clipboard_working')
     set clipboard=unnamedplus
   endif
-  DojoFocus global
+  call s:Focus('global')
   call assert_match('Learn  :g', s:Panel())
   call assert_notmatch('g/', getreg(':'))
-  DojoFocus search
+  call s:Focus('search')
   call assert_equal(['write /dev/null', 'learner search'], [histget(':', -1), histget('/', -1)])
   if has('clipboard_working')
     call assert_equal(s:clip, getreg('+'))
@@ -606,7 +616,7 @@ try
   call assert_equal(['custom-rename-variable', 'never-run', 'v2-drill'],
         \ sort(map(filter(copy(s:goals), 'get(v:val, "custom")'), 'v:val.id')))
   call assert_equal([], filter(s:goals[: 6], '!get(v:val, "generated")'))
-  DojoFocus quote
+  call s:Focus('quote')
   for s:goal in range(10)
     if vim_dojo#Task().id ==# 'never-run'
       call assert_match('Rename the host', s:Panel())
@@ -759,7 +769,7 @@ try
   let g:vim_dojo_state_dir = s:state . '/generated-goal'
   let s:changed = 0
   for s:round in range(3)
-    DojoFocus quote
+    call s:Focus('quote')
     for s:goal in range(10)
       let s:task = vim_dojo#Task()
       if !has_key(s:task, 'snippet')
@@ -790,7 +800,7 @@ try
   " goals-differ: two rounds on one lesson do not give the same ten goals.
   let s:rounds = []
   for s:round in range(2)
-    DojoFocus quote
+    call s:Focus('quote')
     let s:goals = []
     for s:goal in range(10)
       call add(s:goals, [vim_dojo#Task().lines, vim_dojo#Task().position, vim_dojo#Task().solution])
@@ -813,7 +823,8 @@ try
           \   . ' {_, drill -> drill.id ==# id}), 2)}])}',
           \ '-S', s:root . '/dojo.vim'], {'hidden': 1, 'term_rows': 30, 'term_cols': 80})
     call s:Typed('', 'Start today')
-    call s:Typed(":call g:Learn('quoted-item')\r", 'Watch')
+    call s:Typed(":call g:Learn('quoted-item')\r", 'page')
+    call s:Typed("\r", 'Watch')
     call s:Typed('', 'Change the first item')
     call assert_notmatch('Watch', s:Typed('', '\\h Hint'))
     call s:Typed('x', 'differs')
