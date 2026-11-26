@@ -22,6 +22,7 @@ function! vim_dojo#map#Open() abort
     nnoremap <buffer> <silent> <CR> <Cmd>call <SID>Enter()<CR>
     nnoremap <buffer> <silent> d <Cmd>call <SID>Leave()<Bar>call vim_dojo#Diagnostic()<CR>
     nnoremap <buffer> <silent> q <Cmd>call <SID>Leave()<CR>
+    nnoremap <buffer> <silent> p <Cmd>call <SID>Page()<CR>
   endif
   call s:Draw(1)
   call cursor(index(map(copy(b:dojo_rows), {_, row -> has_key(row, 'session')}), 1) + 1, 3)
@@ -69,7 +70,7 @@ function! s:Draw(initial) abort
   let parts = []
   for [kind, members] in [['review', b:dojo_plan.review], ['learn', b:dojo_plan.learn]]
     if !empty(members)
-      call add(parts, kind . ' ' . join(map(copy(members), {_, t -> t.keys}), ' / '))
+      call add(parts, kind . ' ' . join(map(copy(members), {_, t -> t.title}), ' / '))
     endif
   endfor
   call add(rows, [strcharpart(printf('  ▶ %-29s%s', 'Start today''s session', join(parts, '  ·  ')), 0, 80),
@@ -90,14 +91,14 @@ function! s:Draw(initial) abort
       for technique in members
         let item = state[technique.id]
         let level = s:Level(item)
-        let line = '  ' . s:symbols[level] . ' ' . s:Pad(strcharpart(technique.keys, 0, 19), 20)
+        let line = '  ' . s:symbols[level] . ' ' . s:Pad(strcharpart(technique.title, 0, 19), 20)
               \ . s:Pad(s:words[level], 10) . s:Due(item, today)
         call add(rows, [substitute(line, '\s\+$', '', ''), {'technique': technique.id}])
       endfor
     endif
   endfor
   call add(rows, ['', {}])
-  call add(rows, ['  ○ new   ◐ shaky   ● solid       Enter practise · d diagnostic · q close', {}])
+  call add(rows, ['  ○ new  ◐ shaky  ● solid   Enter practise · p page · d diagnostic · q close', {}])
 
   let b:dojo_rows = map(copy(rows), {_, row -> row[1]})
   setlocal modifiable
@@ -120,6 +121,20 @@ function! s:Enter() abort
     call s:Leave()
     call vim_dojo#Focus(row.technique)
   endif
+endfunction
+
+" A lesson's page, read-only, below the map. q closes it.
+function! s:Page() abort
+  let id = get(get(b:dojo_rows, line('.') - 1, {}), 'technique', '')
+  let page = get(get(filter(vim_dojo#drills#Techniques(), {_, t -> t.id ==# id}), 0, {}), 'page', [])
+  if empty(page)
+    return
+  endif
+  belowright new
+  setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted filetype=markdown
+  call setline(1, page)
+  setlocal nomodifiable nomodified
+  nnoremap <buffer> <silent> q <Cmd>close<CR>
 endfunction
 
 function! s:Leave() abort

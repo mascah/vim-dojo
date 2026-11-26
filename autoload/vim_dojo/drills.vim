@@ -1,50 +1,107 @@
-" Skills in teaching order. Each built-in skill lives in
-" autoload/vim_dojo/skills/{id}.vim and returns its techniques in order.
-let s:skills = [['move', 'Move'], ['edit', 'Edit'], ['objects', 'Objects'],
-      \ ['repeat', 'Repeat'], ['search', 'Search and jumps'], ['visual', 'Visual'],
-      \ ['registers', 'Registers and macros'], ['ex', 'Ex'], ['custom', 'Custom']]
 let s:special = '<\%(lt\|Esc\|CR\|BS\|Tab\|Up\|Down\|Left\|Right\|C-[^>]\+\)>'
 let s:root = expand('<sfile>:p:h:h:h')
 let s:filetypes = {'go': 'go', 'py': 'python', 'ts': 'typescript', 'html': 'html', 'md': 'markdown',
       \ 'yaml': 'yaml', 'toml': 'toml', 'json': 'json'}
 let s:snippets = []
+let s:lessons = []
+" v2 technique ids whose lesson took another id. A custom drill that names
+" one joins the new lesson.
+let s:renamed = {'counts': 'count-lines', 'join': 'line-ops', 'paren': 'bracket', 'brace': 'bracket',
+      \ 'insert-at': 'insert-line', 'put': 'yank-put'}
 
+" Sections in teaching order, as [id, name], from lessons/outline.json.
 function! vim_dojo#drills#Skills() abort
-  return deepcopy(s:skills)
+  return map(s:Outline(), {_, section -> [section.id, section.name]}) + [['custom', 'Custom']]
 endfunction
 
-" Every technique in curriculum order, each with its drills. Custom drills
-" join their declared technique, or stand as a technique of their own.
+function! s:Outline() abort
+  return json_decode(join(readfile(s:root . '/lessons/outline.json'), "\n"))
+endfunction
+
+" Every lesson in outline order, each with its scenarios as `drills`.
+" Custom drills join their declared lesson, or stand as a lesson of their own.
 function! vim_dojo#drills#Techniques() abort
-  let techniques = []
-  for [skill, _] in s:skills[: -2]
-    for technique in vim_dojo#skills#{skill}#Techniques()
-      let technique.skill = skill
-      for drill in technique.drills
-        call extend(drill, {'skill': skill, 'technique': technique.id})
-      endfor
-      call add(techniques, technique)
-    endfor
-  endfor
+  if empty(s:lessons)
+    let s:lessons = s:Lessons()
+  endif
+  let techniques = deepcopy(s:lessons)
   let by_id = {}
   for technique in techniques
     let by_id[technique.id] = technique
-  endfor
-  " A lesson file adds generators to the technique of its id.
-  for name in readdir(s:root . '/lessons', {name -> name =~# '\.json$'})
-    let lesson = json_decode(join(readfile(s:root . '/lessons/' . name), "\n"))
-    call extend(by_id[lesson.id], lesson)
   endfor
   for drill in s:Custom(techniques)
     if has_key(drill, 'technique')
       let drill.skill = by_id[drill.technique].skill
       call add(by_id[drill.technique].drills, drill)
     else
-      call add(techniques, {'id': drill.id, 'keys': drill.id, 'name': drill.goal,
-            \ 'skill': drill.skill, 'custom': 1, 'drills': [drill]})
+      call add(techniques, {'id': drill.id, 'title': drill.id, 'keys': [],
+            \ 'skill': 'custom', 'custom': 1, 'drills': [drill]})
     endif
   endfor
   return techniques
+endfunction
+
+function! s:Lessons() abort
+  let v2 = s:V2()
+  let lessons = []
+  for section in s:Outline()
+    for id in section.lessons
+      let path = s:root . '/lessons/' . id . '.md'
+      if filereadable(path)
+        let lesson = vim_dojo#drills#Lesson(path)
+      elseif has_key(v2, id)
+        let lesson = v2[id]
+      else
+        continue
+      endif
+      let lesson.skill = section.id
+      for drill in lesson.drills
+        call extend(drill, {'skill': section.id, 'technique': id})
+      endfor
+      call add(lessons, lesson)
+    endfor
+  endfor
+  return lessons
+endfunction
+
+" A lesson file is its page in Markdown, ending with one ```json block that
+" holds the lesson: id, title, keys as [key, what it does] pairs, and its
+" generators and scenarios. The page is everything above that block.
+function! vim_dojo#drills#Lesson(path) abort
+  let lines = readfile(a:path)
+  let open = len(lines) - 1 - match(reverse(copy(lines)), '^```json\s*$')
+  let close = match(lines, '^```\s*$', open + 1)
+  if open >= len(lines) || close < 0 || !empty(filter(lines[close + 1 :], 'v:val =~# "\\S"'))
+    throw 'Vim Dojo: ' . a:path . ' does not end with one ```json block'
+  endif
+  let lesson = json_decode(join(lines[open + 1 : close - 1], "\n"))
+  let page = lines[: open - 1]
+  while !empty(page) && page[-1] !~# '\S'
+    call remove(page, -1)
+  endwhile
+  return extend(lesson, {'page': page, 'drills': get(lesson, 'scenarios', [])})
+endfunction
+
+" ponytail: a bridge while lessons move from autoload/vim_dojo/skills to
+" Markdown; it goes with the last of them.
+function! s:V2() abort
+  let v2 = {}
+  for skill in ['move', 'edit', 'objects', 'repeat', 'search', 'visual', 'registers', 'ex']
+    for technique in vim_dojo#skills#{skill}#Techniques()
+      let id = get(s:renamed, technique.id, technique.id)
+      if has_key(v2, id)
+        call extend(v2[id].drills, technique.drills)
+      else
+        let v2[id] = {'id': id, 'title': technique.keys, 'keys': [[technique.keys, technique.name]],
+              \ 'drills': technique.drills}
+      endif
+    endfor
+  endfor
+  for name in readdir(s:root . '/lessons', {name -> name =~# '\.json$' && name !=# 'outline.json'})
+    let lesson = json_decode(join(readfile(s:root . '/lessons/' . name), "\n"))
+    call extend(v2[lesson.id], lesson)
+  endfor
+  return v2
 endfunction
 
 " Fills a drill's template variables and works out everything that can be
@@ -237,7 +294,6 @@ function! s:Custom(techniques) abort
     call extend(ids, map(copy(technique.drills), {_, drill -> drill.id}))
   endfor
   let builtin = copy(ids)
-  let skills = map(copy(s:skills), {_, skill -> skill[0]})
   let drills = []
   for name in readdir(dir, {name -> name =~# '\.json$'})
     try
@@ -260,8 +316,15 @@ function! s:Custom(techniques) abort
       if task.id !~# '^[a-z0-9-]\+$' || index(ids, task.id) >= 0 || has_key(known, task.id)
         throw 'Invalid or duplicate id'
       endif
-      if get(task, 'ft', 'text') !~# '^\w\+$' || has_key(task, 'technique') && !has_key(known, task.technique)
-        throw 'Unknown ft or technique'
+      if get(task, 'ft', 'text') !~# '^\w\+$'
+        throw 'Unknown ft'
+      endif
+      " A technique that is no lesson's leaves the drill in Custom.
+      if has_key(task, 'technique')
+        let task.technique = get(s:renamed, task.technique, task.technique)
+        if !has_key(known, task.technique)
+          call remove(task, 'technique')
+        endif
       endif
       for field in ['lines'] + (has_key(task, 'target') ? [] : ['expected'])
         if type(get(task, field)) != v:t_list || empty(task[field])
@@ -272,7 +335,8 @@ function! s:Custom(techniques) abort
       if !has_key(task, 'target') && task.lines ==# task.expected
         throw 'Expected buffer must differ'
       endif
-      let clean = {'custom': 1, 'ft': 'text', 'skill': index(skills, get(task, 'skill')) >= 0 ? task.skill : 'custom'}
+      " v2 files may name a skill, which no longer places them.
+      let clean = {'custom': 1, 'ft': 'text', 'skill': 'custom'}
       for field in ['id', 'goal', 'keys', 'lines', 'expected', 'ft', 'start', 'technique', 'solution', 'target']
         if has_key(task, field)
           let clean[field] = task[field]

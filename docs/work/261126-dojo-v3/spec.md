@@ -469,7 +469,34 @@ only; the v2 map keeps working until slice 5 replaces it.
    content out of `autoload/vim_dojo/skills/*.vim` into lesson files, re-cut
    to the outline. The bulk of the work by volume; each section can land
    separately. Until slice 5, a page opens as a read-only buffer in the dojo
-   tab.
+   tab. Settled with the author on 2026-11-26:
+   - `lessons/outline.json` lists the sections in order, each with `id`,
+     `name`, and its lesson ids in order. It is the only place order is set.
+   - `lessons/<id>.md` is the page, ending with one fence opened by exactly
+     ` ```json `; only blank lines may follow it. The page is everything
+     above. The JSON holds `id`, `title` (what the map shows), `keys` as
+     `[key, a few words]` pairs pinned in a learn round, optional `moves` and
+     `snippets`, `generators`, and `scenarios`, which are v2 drill dicts
+     unchanged. A page has a `| Key | What it does |` table naming every
+     pinned key, `## Example` with a before and an after block, `## When to
+     use it`, and `## The trap`.
+   - In a lesson with generators, a round is its generated goals followed by
+     up to three scenarios and custom drills, least recently tried first and
+     untried custom drills before untried built-in ones, so a cursor
+     lesson's hops are unbroken. A placeholder names its `lesson`.
+   - v2 ids are kept where a lesson keeps its meaning. `counts`, `join`,
+     `paren`, `brace`, `insert-at`, and `put` were renamed or folded; a
+     custom drill naming one joins the new lesson, and one naming an unknown
+     technique stands in Custom instead of being skipped. Round records under
+     retired ids are ignored, not migrated.
+   - Internal names stay `technique` and `skill` until slice 5, and records
+     keep the `technique` field.
+   - A learn round on a lesson still new opens on its page; Enter starts it.
+     `p` on a map row opens a page below the map.
+   - `,` has no goals: from a fresh start it is never the shortest key. Its
+     page teaches it.
+   - Until the last section lands, an outline id with no `.md` file falls
+     back to the v2 technique of that id, or of the ids renamed to it.
 5. **The shell** (shell-map, shell-page, shell-round, shell-stats,
    one-front-end, nothing-raw-persisted). Go module at the repository root.
    Ports `progress#State` and the session plan to Go, which then owns them;

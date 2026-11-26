@@ -7,6 +7,7 @@ let g:vim_dojo_demo_delay = 0
 call setline(1, 'An unsaved edit in the original window')
 let s:original = bufnr('%')
 let s:root = fnamemodify(expand('<sfile>:p'), ':h:h')
+execute 'set runtimepath^=' . escape(s:root, '\, ')
 
 function! s:Panel() abort
   return join(getbufline(winbufnr(1), 1, '$'), "\n")
@@ -147,6 +148,34 @@ function! s:Typed(keys, pattern) abort
 endfunction
 
 try
+  " outline: the eleven sections in order, then Custom; lessons in outline
+  " order, Foundations first.
+  call assert_equal(['Foundations', 'Entering Insert', 'Along the line', 'Operators', 'Through the file',
+        \ 'Search and jumps', 'Text objects', 'Repeat', 'Visual', 'Registers and macros', 'Ex', 'Custom'],
+        \ map(vim_dojo#drills#Skills(), 'v:val[1]'))
+  call assert_equal(['modes', 'hjkl', 'word', 'insert'], map(vim_dojo#drills#Techniques()[: 3], 'v:val.id'))
+  let s:outline = json_decode(join(readfile(s:root . '/lessons/outline.json'), "\n"))
+  let s:order = flattennew(map(copy(s:outline), 'v:val.lessons'))
+  call assert_equal(filter(copy(s:order), 'index(map(vim_dojo#drills#Techniques(), "v:val.id"), v:val) >= 0'),
+        \ map(vim_dojo#drills#Techniques(), 'v:val.id'))
+  " page-shape: every page has a key table naming each pinned key, an example
+  " with the text before and after, when to use it, and a trap, in about 150
+  " to 250 words. Every lesson file is in the outline.
+  for s:file in glob(s:root . '/lessons/*.md', 0, 1)
+    call assert_true(index(s:order, fnamemodify(s:file, ':t:r')) >= 0, s:file . ' is not in the outline')
+  endfor
+  for s:lesson in filter(vim_dojo#drills#Techniques(), 'has_key(v:val, "page")')
+    let s:text = join(s:lesson.page, "\n")
+    call assert_match('\n| Key | What it does |\n| --- | --- |\n| ', s:text, s:lesson.id)
+    for s:pair in s:lesson.keys
+      call assert_true(stridx(s:text, '| `' . s:pair[0] . '` |') >= 0, s:lesson.id . ' table lacks ' . s:pair[0])
+    endfor
+    let s:example = matchstr(s:text, '\n## Example\n\zs.\{-}\ze\n## ')
+    call assert_true(count(s:example, "\n```") >= 4, s:lesson.id . ' needs a before and an after')
+    call assert_match('\n## When to use it\n.*\n## The trap\n', s:text, s:lesson.id)
+    call assert_inrange(150, 260, len(split(s:text)), s:lesson.id . ' page length')
+  endfor
+
   " map-readable and map-states on a fresh state directory.
   execute 'source ' . fnameescape(s:root . '/dojo.vim')
   call assert_equal('nofile', &l:buftype)
@@ -163,7 +192,7 @@ try
   call assert_true(len(s:rows) > 1)
   call assert_equal([], filter(copy(s:rows), 'v:val !~# " new\\s*$"'))
   " Enter on a closed skill opens it, and again closes it.
-  let s:closed = search('^Objects ', 'n')
+  let s:closed = search('^Text objects ', 'n')
   let s:before = line('$')
   call cursor(s:closed, 1)
   call feedkeys("\<CR>", 'xt')
@@ -173,11 +202,21 @@ try
   call assert_equal(s:before, line('$'))
   " round-length, auto-advance, keys-pinned, learn-pass: today's session on a
   " fresh state is a learn round of ten on the first technique.
+  " page-first: a new lesson opens on its page, read-only, and Enter starts it.
   let s:first = vim_dojo#drills#Techniques()[0]
   call cursor(search('▶'), 1)
   call feedkeys("\<CR>", 'xt')
-  call assert_match('Learn  ' . escape(s:first.keys, '\') . '  ·  1/10', s:Panel())
-  call assert_match('Keys  ' . escape(s:first.keys, '\'), s:Panel())
+  call assert_match('Learn  ' . s:first.title . '  ·  page', s:Panel())
+  call assert_equal(s:first.page, getline(1, '$'))
+  call assert_equal([0, 'markdown'], [&l:modifiable, &l:filetype])
+  call assert_equal('<Cmd>DojoNext<CR>', maparg('<CR>', 'n'))
+  DojoHint
+  DojoSkip
+  call assert_match('·  page', s:Panel())
+  call feedkeys("\<CR>", 'xt')
+  call assert_match('Learn  ' . s:first.title . '  ·  1/10', s:Panel())
+  call assert_match('Keys  i  ', s:Panel())
+  call assert_match('\n      Esc  come back', s:Panel())
   call assert_notmatch('Last:', s:Panel())
   let s:task = vim_dojo#Task()
   call assert_equal(s:task.lines, getline(1, '$'))
@@ -185,7 +224,7 @@ try
   call s:Solve()
   call assert_match('2/10', s:Panel())
   call assert_match(printf('Last: %d keys · par %d · clean', s:task.par, s:task.par), s:Panel())
-  call assert_match('Keys  ' . escape(s:first.keys, '\'), s:Panel())
+  call assert_match('Keys  i  ', s:Panel())
   call assert_equal('clean', s:Last().result)
   call assert_equal('', maparg('<CR>', 'n'))
   for s:goal in range(1, 9)
@@ -347,7 +386,7 @@ try
   DojoFocus quote
   for s:index in range(10)
     call assert_equal('quote', vim_dojo#Task().technique)
-    call assert_match(printf('Review  Inside or around quotes  ·  %d/10', s:index + 1), s:Panel())
+    call assert_match(printf('Review  i" a"  ·  %d/10', s:index + 1), s:Panel())
     DojoSkip
   endfor
   call assert_match('0 of 10 clean.*not passed', s:Panel())
@@ -366,8 +405,8 @@ try
   call s:Play(8)
   call assert_equal([1, s:today + 1], [s:Box('dot').box, s:Box('dot').due])
   DojoFocus dot
-  call assert_match('Review  Repeat the last change  ·  1/10', s:Panel())
-  call assert_notmatch('Keys  \|Make one complete edit', s:Panel())
+  call assert_match('Review  \.  ·  1/10', s:Panel())
+  call assert_notmatch('Keys  ', s:Panel())
   call s:Play(8)
   call assert_equal([2, s:today + 3], [s:Box('dot').box, s:Box('dot').due])
   DojoFocus dot
@@ -410,12 +449,12 @@ try
   call assert_match('review :g / \. / Ctrl-O Ctrl-I.*learn ', getline(search('▶')))
   call cursor(search('▶'), 1)
   call feedkeys("\<CR>", 'xt')
-  call assert_match('Review  Run a command on matching lines  ·  round 1 of 4  ·  1/10', s:Panel())
+  call assert_match('Review  :g  ·  round 1 of 4  ·  1/10', s:Panel())
   call assert_notmatch('Keys  ', s:Panel())
   call s:Play(0)
   call assert_match('Enter / :DojoNext  Next round', s:Panel())
   call feedkeys("\<CR>", 'xt')
-  call assert_match('Review  Repeat the last change  ·  round 2 of 4  ·  1/10', s:Panel())
+  call assert_match('Review  \.  ·  round 2 of 4  ·  1/10', s:Panel())
   call assert_notmatch('Last:', s:Panel())
   DojoClose
 
@@ -460,7 +499,7 @@ try
     call assert_equal(s:clip, getreg('+'))
     set clipboard=
   endif
-  call vim_dojo#Start(s:Round(['word-back']))
+  call vim_dojo#Start(s:Round(['line-start']))
   let s:target = vim_dojo#Task().target
   for s:step in range(80)
     if [line('.'), col('.')] == s:target
@@ -492,6 +531,42 @@ try
   call writefile([json_encode({'id': 'rename-variable', 'goal': 'Quote it', 'technique': 'quote',
         \ 'lines': ['x = "a"'], 'expected': ['x = "b"'], 'hint': 'Inside quotes.',
         \ 'keys': 'ci"b', 'why': 'Quotes.'})], g:vim_dojo_drill_dir . '/clash.json')
+  " custom-still-loads: a custom drill joins its lesson's rounds, after the
+  " generated goals, with its par shown and its solution never run. A v2
+  " technique id that was renamed finds the new lesson; one that is gone
+  " leaves the drill in Custom.
+  let g:ran = 0
+  call writefile([json_encode({'id': 'never-run', 'goal': 'Rename the host', 'technique': 'quote',
+        \ 'solution': ':let g:ran = 1<CR>', 'lines': ['host = "a"'], 'expected': ['host = "b"']})],
+        \ g:vim_dojo_drill_dir . '/never-run.json')
+  call writefile([json_encode({'id': 'old-paren', 'goal': 'Empty it', 'technique': 'paren',
+        \ 'lines': ['f(x)'], 'expected': ['f()'], 'keys': 'di('})], g:vim_dojo_drill_dir . '/paren.json')
+  call writefile([json_encode({'id': 'old-gone', 'goal': 'Empty it', 'technique': 'no-such-lesson',
+        \ 'lines': ['f(x)'], 'expected': ['f()'], 'keys': 'di('})], g:vim_dojo_drill_dir . '/gone.json')
+  let s:by_id = {}
+  for s:technique in vim_dojo#drills#Techniques()
+    let s:by_id[s:technique.id] = s:technique
+  endfor
+  call assert_equal(1, len(filter(copy(s:by_id.bracket.drills), 'v:val.id ==# "old-paren"')))
+  call assert_equal('custom', get(get(s:by_id, 'old-gone', {}), 'skill', ''))
+  let s:goals = vim_dojo#progress#Round(s:by_id.quote, 'review').goals
+  call assert_equal(10, len(s:goals))
+  call assert_equal(['custom-rename-variable', 'never-run', 'v2-drill'],
+        \ sort(map(filter(copy(s:goals), 'get(v:val, "custom")'), 'v:val.id')))
+  call assert_equal([], filter(s:goals[: 6], '!get(v:val, "generated")'))
+  DojoFocus quote
+  for s:goal in range(10)
+    if vim_dojo#Task().id ==# 'never-run'
+      call assert_match('Rename the host', s:Panel())
+      DojoHint
+      call assert_match('Hint  : l e t', s:Panel())
+    endif
+    DojoSkip
+  endfor
+  call assert_match('try : l e t ', s:Panel())
+  call assert_equal(0, g:ran)
+  DojoClose
+  call delete(g:vim_dojo_drill_dir . '/never-run.json')
   call assert_match('no technique', execute('DojoFocus v2-drill'))
   call vim_dojo#Start(s:Round(['v2-drill']))
   call assert_equal(['python', [2, 1]], [&l:filetype, [line('.'), col('.')]])
@@ -550,9 +625,10 @@ try
     if !empty(s:only) && s:technique.skill !=# s:only
       continue
     endif
-    call assert_true(len(s:technique.drills) >= 3 || !empty(filter(copy(s:technique.drills), 'has_key(v:val, "vars")')),
-          \ s:technique.id . ' needs a template or three drills')
-    call assert_equal(2, len(s:technique.card), s:technique.id . ' card')
+    " scenario-width: a lesson that relies on scenarios has four or more.
+    if has_key(s:technique, 'page') && !has_key(s:technique, 'generators')
+      call assert_true(len(s:technique.drills) >= 4, s:technique.id . ' needs four scenarios')
+    endif
     for s:drill in s:technique.drills
       if has_key(s:drill, 'vars')
         let s:first = vim_dojo#drills#Instance(s:drill)
@@ -581,14 +657,14 @@ try
   call assert_equal(['config', 'go', 'html', 'markdown', 'python', 'typescript'],
         \ uniq(sort(map(copy(s:snippets), 'index(["yaml", "toml", "json"], v:val.ft) >= 0 ? "config" : v:val.ft'))))
   let s:generated = filter(vim_dojo#drills#Techniques(), 'has_key(v:val, "generators")')
-  call assert_equal(['find-char', 'paren', 'quote', 'word'], sort(map(copy(s:generated), 'v:val.id')))
 
   " targets-from-vim and no-short-walk: on every snippet a lesson is offered,
   " a round of its goals is each solved clean at par by its own solution, and
   " none outside the lessons that teach them is in reach of h j k l x.
   let g:vim_dojo_state_dir = s:state . '/generated'
   for s:lesson in s:generated
-    let s:walks = !empty(filter(split(s:lesson.keys), 'index(["h", "j", "k", "l", "x"], v:val) >= 0'))
+    let s:walks = !empty(filter(flattennew(map(copy(s:lesson.keys), 'split(v:val[0])')),
+          \ 'index(["h", "j", "k", "l", "x"], v:val) >= 0'))
     let s:suits = vim_dojo#drills#Suits(s:lesson, 10)
     call assert_true(len(s:suits) >= 2, s:lesson.id . ' has too few snippets')
     for s:snippet in s:suits
@@ -634,6 +710,10 @@ try
     DojoFocus quote
     for s:goal in range(10)
       let s:task = vim_dojo#Task()
+      if !has_key(s:task, 'snippet')
+        DojoSkip
+        continue
+      endif
       call assert_true(line('$') >= 20)
       call assert_equal(1, len(getmatches()))
       let s:mark = searchpos(getmatches()[0].pattern, 'nw')

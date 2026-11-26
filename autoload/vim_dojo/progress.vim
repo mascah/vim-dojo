@@ -147,23 +147,29 @@ function! vim_dojo#progress#Plan(techniques) abort
   return {'rounds': rounds, 'review': review, 'learn': learn}
 endfunction
 
-" A technique's drills, least recently tried first.
+" A technique's drills, least recently tried first, and among those never
+" tried, the learner's own first: a custom drill counts a second older.
 function! s:Order(technique) abort
   let tried = {}
   for record in values(s:Read())
     let tried[record.id] = max([get(tried, record.id, 0), record.time])
   endfor
-  return sort(copy(a:technique.drills), {left, right -> get(tried, left.id, 0) - get(tried, right.id, 0)})
+  return sort(copy(a:technique.drills), {left, right -> get(tried, left.id, 0) - get(left, 'custom', 0)
+        \ - get(tried, right.id, 0) + get(right, 'custom', 0)})
 endfunction
 
-" Ten goals on one technique: generated when it has generators, which the
-" runner draws as the round opens, otherwise cycling through its drills. A
-" template draws fresh values each time it comes round.
+" Ten goals on one technique. With generators, the runner draws them as the
+" round opens, and up to three of its scenarios and custom drills follow,
+" after the generated run so a cursor lesson's hops are not broken.
+" Otherwise it cycles through its drills. A template draws fresh values each
+" time it comes round.
 function! vim_dojo#progress#Round(technique, kind) abort
-  if has_key(a:technique, 'generators')
-    return {'kind': a:kind, 'technique': a:technique.id, 'goals': repeat([{'generated': 1}], s:round_length)}
-  endif
   let order = s:Order(a:technique)
+  if has_key(a:technique, 'generators')
+    return {'kind': a:kind, 'technique': a:technique.id,
+          \ 'goals': repeat([{'generated': 1, 'lesson': a:technique.id}], s:round_length - len(order[: 2]))
+          \   + order[: 2]}
+  endif
   return {'kind': a:kind, 'technique': a:technique.id,
         \ 'goals': map(range(s:round_length), {index, _ -> order[index % len(order)]})}
 endfunction
@@ -178,7 +184,7 @@ endfunction
 function! vim_dojo#progress#Diagnostic(techniques) abort
   let by_skill = {}
   let order = []
-  for technique in filter(copy(a:techniques), {_, t -> !get(t, 'custom')})
+  for technique in filter(copy(a:techniques), {_, t -> !get(t, 'custom') && !empty(t.drills)})
     if !has_key(by_skill, technique.skill)
       let by_skill[technique.skill] = []
       call add(order, technique.skill)

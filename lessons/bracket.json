@@ -1,5 +1,5 @@
 {
-  "id": "paren",
+  "id": "bracket",
   "generators": [
     {
       "at": "(\\zs[^()]\\+\\ze)",

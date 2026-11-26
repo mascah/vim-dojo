@@ -1,0 +1,18 @@
+[
+  {"id": "foundations", "name": "Foundations", "lessons": ["modes", "hjkl", "word", "insert"]},
+  {"id": "entering-insert", "name": "Entering Insert", "lessons": ["insert-line", "open-line", "x-r", "s"]},
+  {"id": "along-the-line", "name": "Along the line", "lessons": ["big-word", "line-ends", "find-char", "till"]},
+  {"id": "operators", "name": "Operators",
+   "lessons": ["operator", "delete", "change", "line-ops", "yank-put", "undo"]},
+  {"id": "through-the-file", "name": "Through the file",
+   "lessons": ["count-lines", "file-jump", "paragraph", "scroll", "match-pair"]},
+  {"id": "search-and-jumps", "name": "Search and jumps",
+   "lessons": ["search", "next-match", "star", "search-motion", "jumplist", "marks"]},
+  {"id": "text-objects", "name": "Text objects",
+   "lessons": ["inner-around", "word-object", "quote", "bracket", "tag", "para-object"]},
+  {"id": "repeat", "name": "Repeat", "lessons": ["dot", "semicolon", "n-dot", "count-change"]},
+  {"id": "visual", "name": "Visual", "lessons": ["charwise", "linewise", "block", "reselect"]},
+  {"id": "registers-and-macros", "name": "Registers and macros",
+   "lessons": ["yank-register", "named-register", "insert-register", "macro", "macro-again"]},
+  {"id": "ex", "name": "Ex", "lessons": ["substitute", "global", "normal", "increment", "sequence"]}
+]

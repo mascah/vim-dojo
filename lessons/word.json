@@ -1,7 +1,0 @@
-{
-  "id": "word",
-  "moves": true,
-  "generators": [
-    {"keys": "{m}", "vars": {"m": ["w", "ww", "www", "e", "ee", "b", "bb", "bbb"]}}
-  ]
-}
