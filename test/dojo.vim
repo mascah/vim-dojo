@@ -66,6 +66,72 @@ function! s:Play(clean) abort
   endfor
 endfunction
 
+" Whether h j k l and x alone could do a goal within the clean threshold.
+" x only deletes within a line, so an edit is in reach only when each changed
+" line is the old one with characters taken out, few enough to delete. A
+" cursor goal is searched key by key in a scratch window.
+function! s:Walkable(task) abort
+  let limit = a:task.par + 2
+  if a:task.lines !=# a:task.expected
+    if len(a:task.lines) != len(a:task.expected)
+      return 0
+    endif
+    let cost = 0
+    for index in range(len(a:task.lines))
+      let [old, new] = [a:task.lines[index], a:task.expected[index]]
+      if old !=# new
+        if old !~# '\V' . join(map(split(new, '\zs'), 'escape(v:val, "\\")'), '\.\{-}')
+          return 0
+        endif
+        let cost += strchars(old) - strchars(new)
+      endif
+    endfor
+    return cost <= limit
+  endif
+  new
+  call setline(1, a:task.lines)
+  call cursor(a:task.position)
+  let frontier = [winsaveview()]
+  let seen = {}
+  let found = 0
+  for _ in range(limit + 1)
+    if !empty(filter(copy(frontier), '[v:val.lnum, v:val.col + 1] == a:task.target'))
+      let found = 1
+      break
+    endif
+    let next = []
+    for view in frontier
+      for key in ['h', 'j', 'k', 'l']
+        call winrestview(view)
+        execute 'normal!' key
+        let state = filter(winsaveview(), 'index(["lnum", "col", "curswant"], v:key) >= 0')
+        if !has_key(seen, string(state))
+          let seen[string(state)] = 1
+          call add(next, state)
+        endif
+      endfor
+    endfor
+    let frontier = next
+  endfor
+  bwipeout!
+  return found
+endfunction
+
+" Whether a cursor goal's keys reach its target before the last one, which
+" would make par more than it takes, as f then a ; that finds nothing more.
+function! s:Early(task) abort
+  new
+  call setline(1, a:task.lines)
+  let early = 0
+  for length in range(1, a:task.par - 1)
+    call cursor(a:task.position)
+    execute 'normal!' vim_dojo#drills#Raw(a:task.tokens[: length - 1])
+    let early = early || [line('.'), col('.')] == a:task.target
+  endfor
+  bwipeout!
+  return early
+endfunction
+
 " Types into a real Vim and waits for its screen to show the pattern.
 function! s:Typed(keys, pattern) abort
   call term_sendkeys(s:term, a:keys)
@@ -508,6 +574,101 @@ try
   endfor
   DojoClose
 
+  " snippet-set: at least 24 snippets of 20 to 40 lines across six kinds.
+  let s:snippets = vim_dojo#drills#Snippets()
+  call assert_true(len(s:snippets) >= 24, len(s:snippets) . ' snippets')
+  call assert_equal([], map(filter(copy(s:snippets), 'len(v:val.lines) < 20 || len(v:val.lines) > 40'), 'v:val.name'))
+  call assert_equal(['config', 'go', 'html', 'markdown', 'python', 'typescript'],
+        \ uniq(sort(map(copy(s:snippets), 'index(["yaml", "toml", "json"], v:val.ft) >= 0 ? "config" : v:val.ft'))))
+  let s:generated = filter(vim_dojo#drills#Techniques(), 'has_key(v:val, "generators")')
+  call assert_equal(['find-char', 'paren', 'quote', 'word'], sort(map(copy(s:generated), 'v:val.id')))
+
+  " targets-from-vim and no-short-walk: on every snippet a lesson is offered,
+  " a round of its goals is each solved clean at par by its own solution, and
+  " none outside the lessons that teach them is in reach of h j k l x.
+  let g:vim_dojo_state_dir = s:state . '/generated'
+  for s:lesson in s:generated
+    let s:walks = !empty(filter(split(s:lesson.keys), 'index(["h", "j", "k", "l", "x"], v:val) >= 0'))
+    let s:suits = vim_dojo#drills#Suits(s:lesson, 10)
+    call assert_true(len(s:suits) >= 2, s:lesson.id . ' has too few snippets')
+    for s:snippet in s:suits
+      call vim_dojo#Start([{'kind': 'free', 'technique': s:lesson.id,
+            \ 'goals': repeat([{'generated': 1, 'snippet': s:snippet.name}], 10)}])
+      for s:goal in range(10)
+        let s:task = vim_dojo#Task()
+        let s:what = printf('%s on %s: %s from %s', s:lesson.id, s:snippet.name, s:task.solution, string(s:task.position))
+        call assert_equal(s:snippet.lines, s:task.lines, s:what)
+        if !s:walks
+          call assert_false(s:Walkable(s:task), s:what . ' is in reach of h j k l x')
+        endif
+        if s:task.moves
+          call assert_false(s:Early(s:task), s:what . ' reaches its target before its last key')
+        endif
+        call s:Solve()
+        call assert_match(printf('Last: %d keys · par %d · clean', s:task.par, s:task.par), s:Panel(), s:what)
+      endfor
+    endfor
+  endfor
+
+  " hop: a cursor lesson keeps the text and starts each goal where the last
+  " one's target was.
+  call vim_dojo#Start([{'kind': 'free', 'technique': 'word', 'goals': repeat([{'generated': 1}], 10)}])
+  let s:tick = b:changedtick
+  let s:previous = vim_dojo#Task()
+  for s:goal in range(9)
+    call s:Solve()
+    let s:task = vim_dojo#Task()
+    call assert_equal(s:previous.target, s:task.position)
+    call assert_equal(s:task.position, [line('.'), col('.')])
+    call assert_equal(s:tick, b:changedtick)
+    let s:previous = s:task
+  endfor
+  DojoClose
+
+  " generated-goal: a quotes goal highlights one string in a snippet of 20
+  " lines or more and asks for a change; ci", the new text, and <Esc> solve it
+  " clean. Its first learn round demonstrates the first goal.
+  let g:vim_dojo_state_dir = s:state . '/generated-goal'
+  let s:changed = 0
+  for s:round in range(3)
+    DojoFocus quote
+    for s:goal in range(10)
+      let s:task = vim_dojo#Task()
+      call assert_true(line('$') >= 20)
+      call assert_equal(1, len(getmatches()))
+      let s:mark = searchpos(getmatches()[0].pattern, 'nw')
+      let s:string = matchstr(getline(s:mark[0]), '^"[^"]*"', s:mark[1] - 1)
+      call assert_equal(line('.'), s:mark[0])
+      call assert_true(!empty(s:string) && s:mark[1] <= col('.') && col('.') < s:mark[1] + len(s:string), s:string)
+      let s:text = matchstr(s:task.goal, '^Change the highlighted string to "\zs.*\ze"\.$')
+      if empty(s:text)
+        DojoSkip
+        continue
+      endif
+      let s:changed += 1
+      call s:Type('ci"' . s:text . "\<Esc>")
+      call assert_match('Last: \d\+ keys · par \d\+ · clean', s:Panel())
+    endfor
+    if s:changed
+      break
+    endif
+  endfor
+  call assert_true(s:changed > 0)
+
+  " goals-differ: two rounds on one lesson do not give the same ten goals.
+  let s:rounds = []
+  for s:round in range(2)
+    DojoFocus quote
+    let s:goals = []
+    for s:goal in range(10)
+      call add(s:goals, [vim_dojo#Task().lines, vim_dojo#Task().position, vim_dojo#Task().solution])
+      DojoSkip
+    endfor
+    call add(s:rounds, s:goals)
+  endfor
+  call assert_notequal(s:rounds[0], s:rounds[1])
+  DojoClose
+
   " Real typing in a hidden terminal, where the main loop raises TextChanged
   " and CursorMoved and the demo runs on its timer.
   if has('terminal')
@@ -515,15 +676,18 @@ try
     let s:term = term_start([v:progpath, '-Nu', 'NONE', '-i', 'NONE', '-n',
           \ '--cmd', 'let g:vim_dojo_state_dir = ' . string(g:vim_dojo_state_dir),
           \ '--cmd', 'let g:vim_dojo_demo_delay = 30',
+          \ '--cmd', 'let g:Learn = {id -> vim_dojo#Start([{"kind": "learn", "technique": "quote",'
+          \   . ' "goals": repeat(filter(flattennew(map(vim_dojo#drills#Techniques(), "v:val.drills")),'
+          \   . ' {_, drill -> drill.id ==# id}), 2)}])}',
           \ '-S', s:root . '/dojo.vim'], {'hidden': 1, 'term_rows': 30, 'term_cols': 80})
     call s:Typed('', 'Start today')
-    call s:Typed(":DojoFocus quote\r", 'Watch')
+    call s:Typed(":call g:Learn('quoted-item')\r", 'Watch')
     call s:Typed('', 'Change the first item')
     call assert_notmatch('Watch', s:Typed('', '\\h Hint'))
     call s:Typed('x', 'differs')
     call assert_notmatch('differs', s:Typed('\r', 'Item("widget"'))
     call s:Typed("ci\"ratchet\<Esc>", 'Last: 11 keys · par 11 · clean')
-    call s:Typed('', '2/10')
+    call s:Typed('', '2/2')
     call s:Typed(":DojoFocus jumplist\r", 'loadItems')
     call s:Typed('', '\\h Hint')
     call s:Typed("?^func loadItems\r", 'Found the definition')

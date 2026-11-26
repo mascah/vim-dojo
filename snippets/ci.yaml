@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.22", "1.23"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+        env:
+          DATABASE_URL: "postgres://test:test@localhost:5432/test?sslmode=disable"
+      - name: Build
+        run: go build -o bin/server ./cmd/server
+    services:
+      postgres:
+        image: "postgres:16"
+        env:
+          POSTGRES_USER: "test"
+          POSTGRES_PASSWORD: "test"
+        ports: ["5432:5432"]

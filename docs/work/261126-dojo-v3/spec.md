@@ -437,6 +437,33 @@ only; the v2 map keeps working until slice 5 replaces it.
    no-short-walk, hop, goals-differ, snippet-set). Adds the generator
    interpreter beside `vim_dojo#drills#Instance`, and the snippet files.
    Start with one cursor lesson and one edit lesson end to end, then widen.
+   Done 2026-11-26 for `word`, `find-char`, `quote`, and `paren`. Until
+   slice 4, generators sit in `lessons/<id>.json`, one JSON object per
+   lesson that slice 4 wraps in its Markdown page unchanged: `id`, `moves`
+   for a cursor lesson, an optional `snippets` list of filetypes, and
+   `generators`. A generator has `keys` in key notation, optional `vars` as
+   in v2 templates, `at` (a Vim pattern for a place, found per line with
+   `matchstrlist`), `cursor` (`inside`, `first`, `last`), `side` (`after` or
+   `before` the cursor, for cursor lessons), and `goal`. `{0}` to `{9}` in
+   `keys` and `goal` are the place's text and submatches. Patterns cannot
+   refer to the cursor: `matchstrlist` and `matchbufline` ignore `\%.l`,
+   hence `side`. Snippets are `snippets/*.{go,py,ts,html,md,yaml,toml,json}`,
+   typed by extension, four per kind. A round is drawn on one snippet when
+   it opens; a lesson that edits is offered a snippet only with ten places.
+   Besides the spec's rules, a goal is also thrown away when it repeats one
+   in the round, when an edit changes anything outside its highlighted
+   place, and when a cursor goal's keys reach the target before their last
+   key, as `f,;` with no second comma, which would overstate par. With that
+   rule `;` gets goals; `,` does not, since from a fresh start it is never
+   the shortest way. A cursor round starts a goal somewhere fresh after 40
+   draws in a row find nothing from the last target, about one goal in 35
+   for `find-char` and none seen for `word`. Rounds open in 20 to 130 ms.
+   An edit that adds or removes lines is never kept yet; `dd` will need it.
+   In a lesson with generators, rounds are generated only, so custom drills
+   for those four lessons are not in their rounds until slice 4 mixes
+   scenarios in. Fixed on the way: a lambda parameter named `count` reads
+   `v:count` in legacy script, so every demo frame had shown the finished
+   solution.
 4. **Lessons and sections** (outline, page-shape, page-first, section-skip,
    diagnostic-gone, lesson-files, scenario-width, custom-still-loads). Moves
    content out of `autoload/vim_dojo/skills/*.vim` into lesson files, re-cut

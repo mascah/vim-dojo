@@ -1,0 +1,11 @@
+{
+  "id": "find-char",
+  "moves": true,
+  "generators": [
+    {"at": "[[:punct:]]", "side": "after", "keys": "f{0}"},
+    {"at": "[[:punct:]]", "side": "after", "keys": "t{0}"},
+    {"at": "[[:punct:]]", "side": "before", "keys": "F{0}"},
+    {"at": "[[:punct:]]", "side": "after", "keys": "f{0};"},
+    {"at": "[[:punct:]]", "side": "before", "keys": "F{0};"}
+  ]
+}

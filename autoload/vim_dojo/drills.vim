@@ -4,6 +4,10 @@ let s:skills = [['move', 'Move'], ['edit', 'Edit'], ['objects', 'Objects'],
       \ ['repeat', 'Repeat'], ['search', 'Search and jumps'], ['visual', 'Visual'],
       \ ['registers', 'Registers and macros'], ['ex', 'Ex'], ['custom', 'Custom']]
 let s:special = '<\%(lt\|Esc\|CR\|BS\|Tab\|Up\|Down\|Left\|Right\|C-[^>]\+\)>'
+let s:root = expand('<sfile>:p:h:h:h')
+let s:filetypes = {'go': 'go', 'py': 'python', 'ts': 'typescript', 'html': 'html', 'md': 'markdown',
+      \ 'yaml': 'yaml', 'toml': 'toml', 'json': 'json'}
+let s:snippets = []
 
 function! vim_dojo#drills#Skills() abort
   return deepcopy(s:skills)
@@ -26,6 +30,11 @@ function! vim_dojo#drills#Techniques() abort
   for technique in techniques
     let by_id[technique.id] = technique
   endfor
+  " A lesson file adds generators to the technique of its id.
+  for name in readdir(s:root . '/lessons', {name -> name =~# '\.json$'})
+    let lesson = json_decode(join(readfile(s:root . '/lessons/' . name), "\n"))
+    call extend(by_id[lesson.id], lesson)
+  endfor
   for drill in s:Custom(techniques)
     if has_key(drill, 'technique')
       let drill.skill = by_id[drill.technique].skill
@@ -43,15 +52,7 @@ endfunction
 function! vim_dojo#drills#Instance(drill) abort
   let task = deepcopy(a:drill)
   if has_key(task, 'vars')
-    let pick = {}
-    for [name, values] in items(task.vars)
-      let value = values[rand() % len(values)]
-      if type(value) == v:t_dict
-        call extend(pick, value)
-      else
-        let pick[name] = value
-      endif
-    endfor
+    let pick = s:Variant(task.vars)
     let task.variant = pick
     call remove(task, 'vars')
     call map(task, {_, field -> s:Fill(field, pick)})
@@ -68,6 +69,103 @@ function! vim_dojo#drills#Instance(drill) abort
     let task.target = s:Position(task.lines, task.target)
   endif
   return task
+endfunction
+
+" One value for each variable. A value that is a dict sets several at once.
+function! s:Variant(vars) abort
+  let pick = {}
+  for [name, values] in items(a:vars)
+    let value = s:Pick(values)
+    if type(value) == v:t_dict
+      call extend(pick, value)
+    else
+      let pick[name] = value
+    endif
+  endfor
+  return pick
+endfunction
+
+function! s:Pick(list) abort
+  return empty(a:list) ? {} : a:list[rand() % len(a:list)]
+endfunction
+
+" Realistic text that generated goals are placed on, one snippet per file,
+" its filetype taken from the extension.
+function! vim_dojo#drills#Snippets() abort
+  if empty(s:snippets)
+    let dir = s:root . '/snippets'
+    let s:snippets = map(readdir(dir), {_, name -> {'name': name,
+          \ 'ft': s:filetypes[fnamemodify(name, ':e')], 'lines': readfile(dir . '/' . name)}})
+  endif
+  return deepcopy(s:snippets)
+endfunction
+
+" The snippets a lesson is offered: those of its filetypes, and for a lesson
+" that edits, only those where its generators find at least `count` places.
+function! vim_dojo#drills#Suits(lesson, count) abort
+  let filetypes = get(a:lesson, 'snippets', [])
+  return filter(vim_dojo#drills#Snippets(), {_, snippet -> (empty(filetypes) || index(filetypes, snippet.ft) >= 0)
+        \ && (get(a:lesson, 'moves') || s:Count(a:lesson, snippet.lines) >= a:count)})
+endfunction
+
+function! s:Count(lesson, lines) abort
+  let places = {}
+  for generator in a:lesson.generators
+    for place in matchstrlist(a:lines, generator.at)
+      let places[place.idx . ':' . place.byteidx] = 1
+    endfor
+  endfor
+  return len(places)
+endfunction
+
+" Draws one goal from a lesson's generators on a snippet, not yet played, so
+" its target is still unknown. An edit starts in a place its generator's `at`
+" pattern matches, which is highlighted. A cursor lesson starts at `from`, or
+" on any non-blank character when that is empty, and its `at` place, on the
+" `side` of the cursor if one is given, only fills in the keys: {0} is the
+" place's text and {1} to {9} its submatches. Returns {} when no place fits.
+function! vim_dojo#drills#Draw(lesson, snippet, from) abort
+  let generator = s:Pick(a:lesson.generators)
+  let moves = get(a:lesson, 'moves', v:false)
+  let places = has_key(generator, 'at') ? matchstrlist(a:snippet.lines, generator.at, {'submatches': v:true}) : []
+  if moves
+    let from = !empty(a:from) ? a:from : s:Start(s:Pick(matchstrlist(a:snippet.lines, '\S')), 'first')
+    let side = get(generator, 'side', '')
+    call filter(places, {_, place -> empty(side) || place.idx + 1 == from[0] && (side ==# 'after'
+          \ ? place.byteidx + 1 > from[1] : place.byteidx + len(place.text) < from[1])})
+  endif
+  let place = s:Pick(places)
+  if has_key(generator, 'at') && empty(place)
+    return {}
+  endif
+  let pick = s:Variant(get(generator, 'vars', {}))
+  if !empty(place)
+    call extend(pick, {'0': place.text})
+    for index in range(1, 9)
+      let pick[index] = place.submatches[index - 1]
+    endfor
+  endif
+  let task = {'id': a:lesson.id . '-generated', 'technique': a:lesson.id, 'skill': a:lesson.skill,
+        \ 'ft': a:snippet.ft, 'snippet': a:snippet.name, 'lines': a:snippet.lines, 'moves': moves,
+        \ 'solution': s:Fill(generator.keys, pick),
+        \ 'goal': s:Fill(get(generator, 'goal', 'Move onto the highlighted character.'), pick)}
+  let task.tokens = vim_dojo#drills#Tokens(task.solution)
+  let task.par = len(task.tokens)
+  if moves
+    let task.position = from
+  else
+    let task.position = s:Start(place, get(generator, 'cursor', 'inside'))
+    let task.place = [place.idx + 1, place.byteidx + 1, place.text]
+    let task.marks = [printf('\%%%dl\%%%dc\V%s', place.idx + 1, place.byteidx + 1, escape(place.text, '\'))]
+  endif
+  return task
+endfunction
+
+" A cursor position on a place's first, last, or any character.
+function! s:Start(place, where) abort
+  let chars = strchars(a:place.text)
+  let char = a:where ==# 'first' || !chars ? 0 : a:where ==# 'last' ? chars - 1 : rand() % chars
+  return [a:place.idx + 1, a:place.byteidx + byteidx(a:place.text, char) + 1]
 endfunction
 
 function! s:Fill(field, pick) abort

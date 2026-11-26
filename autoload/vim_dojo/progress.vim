@@ -156,9 +156,13 @@ function! s:Order(technique) abort
   return sort(copy(a:technique.drills), {left, right -> get(tried, left.id, 0) - get(tried, right.id, 0)})
 endfunction
 
-" Ten goals on one technique, cycling through its drills. A template draws
-" fresh values each time it comes round.
+" Ten goals on one technique: generated when it has generators, which the
+" runner draws as the round opens, otherwise cycling through its drills. A
+" template draws fresh values each time it comes round.
 function! vim_dojo#progress#Round(technique, kind) abort
+  if has_key(a:technique, 'generators')
+    return {'kind': a:kind, 'technique': a:technique.id, 'goals': repeat([{'generated': 1}], s:round_length)}
+  endif
   let order = s:Order(a:technique)
   return {'kind': a:kind, 'technique': a:technique.id,
         \ 'goals': map(range(s:round_length), {index, _ -> order[index % len(order)]})}

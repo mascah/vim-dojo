@@ -201,7 +201,10 @@ function! s:OpenRound() abort
   let first = round.kind ==# 'learn' && !empty(technique)
         \ && !vim_dojo#progress#State([technique])[technique.id].rounds
   let tasks = []
-  for goal in round.goals
+  if get(get(round.goals, 0, {}), 'generated')
+    let tasks = s:Generated(technique, round.goals)
+  endif
+  for goal in tasks == [] ? round.goals : []
     let s:session.task = vim_dojo#drills#Instance(goal)
     call s:Prepare()
     call add(tasks, s:session.task)
@@ -222,6 +225,120 @@ function! s:OpenTask() abort
   else
     call s:Reset()
   endif
+endfunction
+
+" Draws a round of generated goals on one snippet, playing each to find its
+" target and throwing away any that fails, does not do what its lesson
+" does, repeats a goal, or is in reach of h j k l x. A goal may name the
+" snippet. A cursor lesson starts each goal on the last one's target, and
+" somewhere fresh when nothing fits there.
+function! s:Generated(lesson, goals) abort
+  let names = filter(map(copy(a:goals), 'get(v:val, "snippet", "")'), '!empty(v:val)')
+  let snippets = filter(vim_dojo#drills#Suits(a:lesson, len(a:goals)),
+        \ {_, snippet -> empty(names) || index(names, snippet.name) >= 0})
+  let walks = !empty(filter(split(a:lesson.keys), 'index(["h", "j", "k", "l", "x"], v:val) >= 0'))
+  let first = empty(snippets) ? 0 : rand() % len(snippets)
+  for snippet in slice(snippets, first) + slice(snippets, 0, first)
+    let [tasks, seen, from, misses] = [[], {}, [], 0]
+    while len(tasks) < len(a:goals) && misses < 160
+      let task = vim_dojo#drills#Draw(a:lesson, snippet, from)
+      if s:Keep(task, seen, walks)
+        call add(tasks, task)
+        let [from, misses] = [task.moves ? task.target : [], 0]
+      else
+        let misses += 1
+        let from = misses % 40 ? from : []
+      endif
+    endwhile
+    if len(tasks) == len(a:goals)
+      return tasks
+    endif
+  endfor
+  throw 'Vim Dojo: no snippet fills a round of ' . a:lesson.id
+endfunction
+
+" A cursor goal must move the cursor and leave the text; an edit must change
+" only the place it highlights.
+" ponytail: an edit that adds or removes lines is never kept; widen the
+" check when a lesson such as dd needs it.
+function! s:Keep(task, seen, walks) abort
+  if empty(a:task) || has_key(a:seen, string([a:task.position, a:task.solution]))
+    return 0
+  endif
+  let s:session.task = a:task
+  try
+    call s:Prepare()
+  catch /^Vim Dojo:/
+    return 0
+  endtry
+  let [lines, expected] = [a:task.lines, a:task.expected]
+  if a:task.moves
+    " Keys that reach the target before they end, as f then a ; that finds
+    " nothing more, would overstate par.
+    let kept = lines ==# expected && type(get(a:task, 'target')) == v:t_list
+          \ && index(s:Isolated({-> map(range(1, a:task.par - 1),
+          \   {_, length -> s:Play(a:task.tokens[: length - 1])[1]})}), a:task.target) < 0
+  else
+    let [lnum, col, text] = a:task.place
+    let [old, new] = [lines[lnum - 1], get(expected, lnum - 1, '')]
+    let [head, tail] = [strpart(old, 0, col - 1), strpart(old, col - 1 + len(text))]
+    let kept = len(lines) == len(expected) && old !=# new
+          \ && slice(lines, 0, lnum - 1) ==# slice(expected, 0, lnum - 1) && slice(lines, lnum) ==# slice(expected, lnum)
+          \ && len(new) >= len(head) + len(tail) && strpart(new, 0, len(head)) ==# head
+          \ && strpart(new, len(new) - len(tail)) ==# tail
+  endif
+  if !kept || !a:walks && s:Walkable(a:task, a:task.par + s:margin)
+    return 0
+  endif
+  let a:seen[string([a:task.position, a:task.solution])] = 1
+  return 1
+endfunction
+
+" Whether h j k l and x alone could do a goal in `limit` keys. x only
+" deletes within a line, so an edit is in reach only when each changed line
+" is the old one with few enough characters taken out. A cursor goal is
+" searched key by key from its start, with the text still loaded.
+function! s:Walkable(task, limit) abort
+  if a:task.lines !=# a:task.expected
+    let deleted = 0
+    for index in range(len(a:task.lines))
+      let [old, new] = [a:task.lines[index], a:task.expected[index]]
+      if old !=# new
+        if old !~# '\V' . join(map(split(new, '\zs'), 'escape(v:val, "\\")'), '\.\{-}')
+          return 0
+        endif
+        let deleted += strchars(old) - strchars(new)
+      endif
+    endfor
+    return deleted <= a:limit
+  endif
+  let s:session.running = 1
+  try
+    call cursor(a:task.position)
+    let frontier = [winsaveview()]
+    let seen = {}
+    for _ in range(a:limit + 1)
+      if !empty(filter(copy(frontier), {_, view -> [view.lnum, view.col + 1] == a:task.target}))
+        return 1
+      endif
+      let next = []
+      for view in frontier
+        for key in ['h', 'j', 'k', 'l']
+          call winrestview(view)
+          execute 'normal!' key
+          let state = filter(winsaveview(), {name, _ -> index(['lnum', 'col', 'curswant'], name) >= 0})
+          if !has_key(seen, string(state))
+            let seen[string(state)] = 1
+            call add(next, state)
+          endif
+        endfor
+      endfor
+      let frontier = next
+    endfor
+    return 0
+  finally
+    let s:session.running = 0
+  endtry
 endfunction
 
 " Plays the solution once to learn the expected buffer, or for a drill that
@@ -258,21 +375,24 @@ function! s:Load() abort
   setlocal modifiable
   let undolevels = &l:undolevels
   let states = get(task, 'history', []) + [task.lines] + get(task, 'redo', [])
-  setlocal undolevels=-1
-  try
-    call s:Fill(states[0])
-    let &l:undolevels = undolevels
-    for state in states[1 :]
-      " Setting undolevels ends an undo block, so each state is its own step.
-      let &g:undolevels = &g:undolevels
-      call s:Fill(state)
-    endfor
-    for _ in get(task, 'redo', [])
-      silent undo
-    endfor
-  finally
-    let &l:undolevels = undolevels
-  endtry
+  " A cursor lesson keeps its text between goals.
+  if !get(task, 'moves') || getline(1, '$') !=# task.lines
+    setlocal undolevels=-1
+    try
+      call s:Fill(states[0])
+      let &l:undolevels = undolevels
+      for state in states[1 :]
+        " Setting undolevels ends an undo block, so each state is its own step.
+        let &g:undolevels = &g:undolevels
+        call s:Fill(state)
+      endfor
+      for _ in get(task, 'redo', [])
+        silent undo
+      endfor
+    finally
+      let &l:undolevels = undolevels
+    endtry
+  endif
   setlocal nomodified nofoldenable
   call cursor(task.position[0], task.position[1])
 endfunction
@@ -395,7 +515,8 @@ function! s:Now() abort
 endfunction
 
 " Marks what still has to change, by line and text, so each mark goes away
-" as its edit is made. A cursor drill marks its target instead.
+" as its edit is made: a generated edit's place, or the changed text. A
+" cursor drill marks its target instead.
 function! s:Highlight() abort
   for id in get(w:, 'dojo_matches', [])
     silent! call matchdelete(id)
@@ -410,7 +531,7 @@ function! s:Highlight() abort
     call add(w:dojo_matches, matchaddpos('DojoTarget', [get(task, 'line') ? task.target[0] : task.target]))
     return
   endif
-  for pattern in s:Changes(task.lines, task.expected)
+  for pattern in get(task, 'marks', s:Changes(task.lines, task.expected))
     call add(w:dojo_matches, matchadd('DojoTarget', pattern))
   endfor
 endfunction
@@ -654,7 +775,7 @@ endfunction
 " timer only paints text and never sends keys.
 function! s:Demo() abort
   let tokens = s:session.task.tokens
-  let frames = s:Isolated({-> map(range(1, len(tokens)), {_, count -> s:Play(tokens[: count - 1])})})
+  let frames = s:Isolated({-> map(range(1, len(tokens)), {_, length -> s:Play(tokens[: length - 1])})})
   call s:Load()
   let s:session.demo = {'frames': frames, 'shown': 0, 'timer': -1}
   let s:session.feedback = []

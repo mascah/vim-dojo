@@ -1,0 +1,31 @@
+# Settings for the order service. Values here are the defaults; any of
+# them can be overridden with an environment variable of the same name.
+
+title = "Order service"
+environment = "production"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+read_timeout = "15s"
+write_timeout = "30s"
+
+[database]
+url = "postgres://orders@db.internal:5432/orders"
+max_connections = 20
+statement_timeout = "5s"
+
+[log]
+level = "info"
+format = "json"
+file = "/var/log/orders/service.log"
+
+[features]
+new_checkout = true
+gift_cards = false
+regions = ["eu-west-1", "us-east-1"]
+
+[mail]
+from = "orders@shop.example.test"
+smtp_host = "smtp.example.test"
+smtp_port = 587

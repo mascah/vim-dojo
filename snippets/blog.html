@@ -1,0 +1,31 @@
+<article class="post" id="post-142">
+  <header>
+    <h2 class="post-title"><a href="/blog/cold-starts">Cutting cold starts in half</a></h2>
+    <p class="meta">By <span class="author">Priya Raman</span>, <time datetime="2026-10-03">3 October</time></p>
+  </header>
+  <p>
+    Our checkout service took four seconds to answer its first request after a
+    deploy. Most of that time went into loading templates (all 312 of them) and
+    opening a database pool that was far larger than it needed to be.
+  </p>
+  <figure>
+    <img src="/img/cold-start.png" alt="Start-up time before and after" width="640" height="360">
+    <figcaption>Start-up time over ten deploys (lower is better)</figcaption>
+  </figure>
+  <h3 id="templates">Load templates on demand</h3>
+  <p>
+    We now parse a template the first time a page needs it. The
+    <code>render()</code> helper keeps a small cache keyed by path.
+  </p>
+  <h3 id="pool">Size the pool for the real load</h3>
+  <ul class="steps">
+    <li>Measure peak connections (we saw 14, not 100)</li>
+    <li>Set the pool to twice that peak</li>
+    <li>Open connections lazily after the first request</li>
+  </ul>
+  <footer>
+    <a class="tag" href="/tags/performance">performance</a>
+    <a class="tag" href="/tags/go">go</a>
+    <a class="share" href="https://social.example.test/share?u=/blog/cold-starts">Share</a>
+  </footer>
+</article>
