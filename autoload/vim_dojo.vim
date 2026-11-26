@@ -287,11 +287,16 @@ function! s:Generated(lesson, goals) abort
 endfunction
 
 " A cursor goal must move the cursor and leave the text; an edit must change
-" only the place it highlights.
-" ponytail: an edit that adds or removes lines is never kept; widen the
-" check when a lesson such as dd needs it.
+" only the place it highlights. Lines above and below the place's line stay
+" as they were, and what that line became keeps the text before and after
+" the place, or, when lines were added, keeps the line itself.
+" A round does not repeat a cursor goal, nor an edit's place.
 function! s:Keep(task, seen, walks) abort
-  if empty(a:task) || has_key(a:seen, string([a:task.position, a:task.solution]))
+  if empty(a:task)
+    return 0
+  endif
+  let key = string(a:task.moves ? [a:task.position, a:task.solution] : a:task.place[: 1])
+  if has_key(a:seen, key)
     return 0
   endif
   let s:session.task = a:task
@@ -309,17 +314,21 @@ function! s:Keep(task, seen, walks) abort
           \   {_, length -> s:Play(a:task.tokens[: length - 1])[1]})}), a:task.target) < 0
   else
     let [lnum, col, text] = a:task.place
-    let [old, new] = [lines[lnum - 1], get(expected, lnum - 1, '')]
+    let old = lines[lnum - 1]
+    let below = len(lines) - lnum
+    let region = slice(expected, lnum - 1, len(expected) - below)
+    let new = join(region, "\n")
     let [head, tail] = [strpart(old, 0, col - 1), strpart(old, col - 1 + len(text))]
-    let kept = len(lines) == len(expected) && old !=# new
-          \ && slice(lines, 0, lnum - 1) ==# slice(expected, 0, lnum - 1) && slice(lines, lnum) ==# slice(expected, lnum)
-          \ && len(new) >= len(head) + len(tail) && strpart(new, 0, len(head)) ==# head
-          \ && strpart(new, len(new) - len(tail)) ==# tail
+    let kept = lines !=# expected && len(expected) - below >= lnum - 1
+          \ && slice(lines, 0, lnum - 1) ==# slice(expected, 0, lnum - 1)
+          \ && slice(lines, lnum) ==# slice(expected, len(expected) - below)
+          \ && (len(region) > 1 && index(region, old) >= 0 || len(new) >= len(head) + len(tail)
+          \     && strpart(new, 0, len(head)) ==# head && strpart(new, len(new) - len(tail)) ==# tail)
   endif
   if !kept || !a:walks && s:Walkable(a:task, a:task.par + s:margin)
     return 0
   endif
-  let a:seen[string([a:task.position, a:task.solution])] = 1
+  let a:seen[key] = 1
   return 1
 endfunction
 
@@ -328,7 +337,9 @@ endfunction
 " is the old one with few enough characters taken out. A cursor goal is
 " searched key by key from its start, with the text still loaded.
 function! s:Walkable(task, limit) abort
-  if a:task.lines !=# a:task.expected
+  if len(a:task.lines) != len(a:task.expected)
+    return 0
+  elseif a:task.lines !=# a:task.expected
     let deleted = 0
     for index in range(len(a:task.lines))
       let [old, new] = [a:task.lines[index], a:task.expected[index]]
