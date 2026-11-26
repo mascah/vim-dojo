@@ -546,7 +546,9 @@ try
     call assert_equal(s:clip, getreg('+'))
     set clipboard=
   endif
-  call vim_dojo#Start(s:Round(['line-start']))
+  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [{'id': 'line-start', 'ft': 'text',
+        \ 'lines': ['total_cost = base + extra'], 'start': 'extra', 'goal': 'Move to the first column.',
+        \ 'solution': '0'}]}])
   let s:target = vim_dojo#Task().target
   for s:step in range(80)
     if [line('.'), col('.')] == s:target

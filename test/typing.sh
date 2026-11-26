@@ -17,14 +17,8 @@ set updatetime=100
 autocmd CursorHold * let g:held = 1
 let g:vim_dojo_state_dir = '$tmp/state'
 let g:vim_dojo_demo_delay = 0
-function! Drill(id) abort
-  for technique in vim_dojo#drills#Techniques()
-    for drill in technique.drills
-      if drill.id ==# a:id
-        call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [drill]}])
-      endif
-    endfor
-  endfor
+function! Goal(drill) abort
+  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [a:drill]}])
 endfunction
 source $root/dojo.vim
 EOF
@@ -62,14 +56,14 @@ tmux new-session -d -s "$session" -x 100 -y 30 "vim -Nu '$tmp/vimrc' -i NONE -n"
 check startup 'Start today'
 
 # real-typing-count
-tmux send-keys -t "$session" ":call Drill('find-equals')" Enter
+tmux send-keys -t "$session" ":call Goal({'id': 'find-equals', 'ft': 'python', 'lines': ['config[\"timeout\"] = 30'], 'goal': 'Move onto the = sign.', 'solution': 'f='})" Enter
 check real-typing-count 'Move onto the = sign'
 slowly f =
 # Two keys: a dropped key or a counted <CursorHold> would show another count.
 check real-typing-count 'Last: 2 keys · par 2 · clean'
 
 # dot-still-one: a burst, then single keys after pauses.
-tmux send-keys -t "$session" ":call Drill('pending-jobs')" Enter
+tmux send-keys -t "$session" ":call Goal({'id': 'pending-jobs', 'ft': 'python', 'start': 'pending', 'goal': 'Mark all three jobs as queued.', 'lines': ['status[\"import\"] = \"pending\"', 'status[\"export\"] = \"pending\"', 'status[\"backup\"] = \"pending\"'], 'solution': 'ciwqueued<Esc>j.j.'})" Enter
 check dot-still-one 'Mark all three jobs as queued'
 sleep 0.3
 tmux send-keys -t "$session" ciwqueued
