@@ -837,7 +837,8 @@ try
     call s:Typed("?^func loadItems\r", 'Found the definition')
     call s:Typed("\<C-O>", 'Last: 18 keys · par 18 · clean')
     " Insert mode at the end of a demo is left, and a typed . there is text.
-    call s:Typed(":DojoFocus dot\r", 'Watch')
+    call s:Typed(":DojoFocus dot\r", 'Learn  \.  ·  page')
+    call s:Typed("\r", 'Watch')
     call term_sendkeys(s:term, 'i')
     call assert_notmatch('-- INSERT --', s:Typed('', '\\h Hint'))
     call s:Typed("ciwq.\<BS>ueued\<Esc>jciwqueued\<Esc>jciwqueued\<Esc>", 'Last: 34 keys · par 14 · try')
