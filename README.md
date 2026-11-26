@@ -157,4 +157,5 @@ from Custom drills above.
 
 Run the checks from this directory with
 `vim -Nu NONE -i NONE -n -es -S test/dojo.vim`. Set `DOJO_SKILL=move` to check
-the drill solutions of one skill only.
+the drill solutions of one skill only. `sh test/typing.sh` types real keys
+into Vim through tmux, with pauses, and is skipped where tmux is missing.

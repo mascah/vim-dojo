@@ -1,5 +1,7 @@
 let s:session = {}
 let s:modes = ['n']
+let s:last_key = reltime()
+let s:pseudo_keys = ['<CursorHold>', '<Ignore>', '<FocusGained>', '<FocusLost>', '<MouseMove>']
 " Registers a solution or demo may touch, restored afterwards. The unnamed
 " register goes last so it points where it pointed before.
 let s:registers = split('0123456789abcdefghijklmnopqrstuvwxyz-/', '\zs') + ['"']
@@ -146,11 +148,19 @@ function! s:Listening() abort
         \ && !s:session.running && empty(s:session.demo) && bufnr('%') == s:session.edit_buf
 endfunction
 
-" Only keys with a typedchar were pressed by the learner. The rest are Vim
+" Keys with a typedchar were pressed by the learner. The rest are Vim
 " replaying a change for . or a register for @, expanding x into dl, or the
-" tail of a mapping, whose first key already carries what was typed.
+" tail of a mapping, whose first key already carries what was typed. But
+" after waiting 'updatetime' for a key, Vim writes a NUL ahead of it in
+" typedchar, which then reads empty; replays and mapping tails never wait,
+" so a key that came after such a wait was typed too. Pseudo-keys such as
+" <CursorHold> carry a typedchar and are never counted.
+" ponytail: a replayed command slower than 'updatetime' makes the next
+" replayed key count; only a tiny 'updatetime' gets near that.
 function! s:Key(key, typed) abort
-  if !empty(a:typed) && s:Listening()
+  let waited = reltimefloat(reltime(s:last_key)) * 1000 >= &updatetime
+  let s:last_key = reltime()
+  if (!empty(a:typed) || waited) && index(s:pseudo_keys, a:key) < 0 && s:Listening()
     call add(s:session.log, [s:modes[-1], a:key])
   endif
 endfunction
