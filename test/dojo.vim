@@ -167,8 +167,9 @@ try
   for s:lesson in filter(vim_dojo#drills#Techniques(), 'has_key(v:val, "page")')
     let s:text = join(s:lesson.page, "\n")
     call assert_match('\n| Key | What it does |\n| --- | --- |\n| ', s:text, s:lesson.id)
+    let s:cells = join(map(filter(copy(s:lesson.page), 'v:val =~# "^| "'), 'split(v:val, " | ")[0]'), "\n")
     for s:pair in s:lesson.keys
-      call assert_true(stridx(s:text, '| `' . s:pair[0] . '` |') >= 0, s:lesson.id . ' table lacks ' . s:pair[0])
+      call assert_match('\V`\s\?' . escape(s:pair[0], '\') . '\s\?`', s:cells, s:lesson.id . ' table lacks ' . s:pair[0])
     endfor
     let s:example = matchstr(s:text, '\n## Example\n\zs.\{-}\ze\n## ')
     call assert_true(count(s:example, "\n```") >= 4, s:lesson.id . ' needs a before and an after')
@@ -819,7 +820,8 @@ try
     call assert_notmatch('differs', s:Typed('\r', 'Item("widget"'))
     call s:Typed("ci\"ratchet\<Esc>", 'Last: 11 keys · par 11 · clean')
     call s:Typed('', '2/2')
-    call s:Typed(":DojoFocus jumplist\r", 'loadItems')
+    call s:Typed(":DojoFocus jumplist\r", 'Ctrl-O Ctrl-I  ·  page')
+    call s:Typed("\r", 'loadItems')
     call s:Typed('', '\\h Hint')
     call s:Typed("?^func loadItems\r", 'Found the definition')
     call s:Typed("\<C-O>", 'Last: 18 keys · par 18 · clean')

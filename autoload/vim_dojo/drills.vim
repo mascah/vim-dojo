@@ -122,6 +122,10 @@ function! vim_dojo#drills#Instance(drill) abort
   if has_key(task, 'find')
     let task.destination = s:Position(task.lines, task.find)[0]
   endif
+  " Marks a scenario sets before it starts, by name and the text they sit on.
+  if has_key(task, 'marked')
+    call map(task.marked, {_, anchor -> s:Position(task.lines, anchor)})
+  endif
   if type(get(task, 'target')) == v:t_string
     let task.target = s:Position(task.lines, task.target)
   endif
@@ -228,6 +232,12 @@ endfunction
 function! s:Fill(field, pick) abort
   if type(a:field) == v:t_list
     return map(copy(a:field), {_, item -> s:Fill(item, a:pick)})
+  elseif type(a:field) == v:t_dict
+    let filled = {}
+    for [key, value] in items(a:field)
+      let filled[s:Fill(key, a:pick)] = s:Fill(value, a:pick)
+    endfor
+    return filled
   elseif type(a:field) != v:t_string
     return a:field
   endif

@@ -412,7 +412,8 @@ endfunction
 
 " Puts the drill's starting text and cursor in the practice buffer. A drill
 " may also bring undo history: `history` lists earlier buffers to undo back
-" to, oldest first, and `redo` later ones that have been undone.
+" to, oldest first, and `redo` later ones that have been undone, and marks
+" already set.
 function! s:Load() abort
   let task = s:session.task
   if &l:filetype !=# task.ft
@@ -440,6 +441,9 @@ function! s:Load() abort
     endtry
   endif
   setlocal nomodified nofoldenable
+  for [name, at] in items(get(task, 'marked', {}))
+    call setpos("'" . name, [0, at[0], at[1], 0])
+  endfor
   call cursor(task.position[0], task.position[1])
   let &l:scroll = s:scroll
   normal! zz
