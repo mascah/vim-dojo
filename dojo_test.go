@@ -391,9 +391,9 @@ func TestFinish(t *testing.T) {
 		!strings.Contains(view, "Start today's session") || len(m.session) != 0 {
 		t.Fatalf("left early:\n%s", view)
 	}
-	// shell-stats: the lesson's recent round, clean of goals and seconds per goal.
+	// shell-stats: the lesson's last round, clean of goals, and seconds per goal.
 	m.Update(press("s"))
-	if view := shown(m); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
+	if view := shown(m); !regexp.MustCompile(`modes and Esc .*8 of 10 +6\.0s`).MatchString(view) {
 		t.Fatalf("stats:\n%s", view)
 	}
 }
@@ -445,7 +445,7 @@ func TestMixed(t *testing.T) {
 
 // The mixed row opens a view to pick the length and the sections; with none
 // chosen it takes every learned lesson. Its summary has no pass, and stats
-// show mixed rounds on a line of their own.
+// show mixed rounds on a row of their own.
 func TestMixedShell(t *testing.T) {
 	c := catalog(t)
 	dir := t.TempDir()
@@ -493,7 +493,7 @@ func TestMixedShell(t *testing.T) {
 		t.Fatalf("mixed summary:\n%s", view)
 	}
 	m.Update(press("s"))
-	if view := shown(m); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
+	if view := shown(m); !regexp.MustCompile(`◆ Mixed practice .*11 of 14 +21\.4s`).MatchString(view) {
 		t.Fatalf("stats:\n%s", view)
 	}
 }

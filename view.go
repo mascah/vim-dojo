@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 )
 
 const (
@@ -21,13 +22,14 @@ const (
 	pageSide  = 110
 )
 
-// layout sizes the page's viewport and renders the lesson into it.
+// layout sizes the page and stats viewports and renders what they hold.
 func (m *model) layout() {
 	if m.width == 0 {
 		return
 	}
 	w := min(m.width, maxWidth)
-	if m.screen == pageScreen {
+	switch m.screen {
+	case pageScreen:
 		text := min(w-5, 84)
 		if w >= pageSide {
 			text = min(w-sideWidth-7, 84)
@@ -36,6 +38,11 @@ func (m *model) layout() {
 		m.page = viewport.New(viewport.WithWidth(text), viewport.WithHeight(max(1, m.height-4)))
 		m.page.SetContent(m.th.render(m.pending.Lesson.Page, text))
 		m.page.SetYOffset(at)
+	case statsScreen:
+		at := m.stats.YOffset()
+		m.stats = viewport.New(viewport.WithWidth(w), viewport.WithHeight(max(1, m.height-3)))
+		m.stats.SetContent(m.statsBody(w))
+		m.stats.SetYOffset(at)
 	}
 }
 
@@ -682,4 +689,93 @@ func (m *model) side(l *Lesson, w int) string {
 	}
 	record := t.card("Your record", "", strings.Join(lines, "\n"), w, len(lines)+2, false)
 	return keysCard + "\n" + record
+}
+
+// statsView is everything the dashboard counts, at full size, with a line a
+// lesson under it.
+func (m *model) statsView() string {
+	w := min(m.width, maxWidth)
+	percent := m.th.fg(m.th.muted).Render(fmt.Sprintf("%3.0f%%", m.stats.ScrollPercent()*100))
+	footer := m.footer(w, bindings{named(keys.Down, "j/k", "scroll"),
+		key.NewBinding(key.WithKeys("space"), key.WithHelp("space/b", "page")), named(keys.Top, "g/G", "ends"),
+		named(keys.Quit, "q", "back")}, percent)
+	return m.fill(m.header(w, "", "Stats")+"\n\n"+m.stats.View(), footer)
+}
+
+func (m *model) statsBody(w int) string {
+	t := m.th
+	today := m.today()
+	all := Since(m.records, 0)
+	days := Active(m.records)
+	big := lipgloss.NewStyle().Bold(true).Foreground(t.text)
+	sub := t.fg(t.muted)
+	passed := 0
+	for _, r := range m.records {
+		if r.Result == "round" && r.Kind != "mixed" && r.Pass() {
+			passed++
+		}
+	}
+	tw := w / 4
+	rate := float64(all.Clean) / float64(max(1, all.Goals))
+	per := float64(all.Seconds) / float64(max(1, all.Goals))
+	tiles := lipgloss.JoinHorizontal(lipgloss.Top,
+		t.card("Rounds", "", big.Render(fmt.Sprint(all.Rounds))+"\n"+sub.Render(fmt.Sprintf("%d passed", passed)), tw, tileRows, false),
+		t.card("Goals", "", big.Render(fmt.Sprint(all.Goals))+sub.Render(fmt.Sprintf(" · %.0f%% clean", rate*100))+"\n"+
+			t.bar(tw-4, rate, t.shaky, t.solid), tw, tileRows, false),
+		t.card("Time", "", big.Render(fmt.Sprintf("%dh %02dm", all.Seconds/3600, all.Seconds%3600/60))+"\n"+
+			sub.Render(fmt.Sprintf("%.1fs a goal", per)), tw, tileRows, false),
+		t.card("Streak", "", big.Render(plural(Streak(days, today), "day"))+"\n"+
+			sub.Render(plural(len(days), "day")+" practised"), w-3*tw, tileRows, false))
+
+	head := sub.Bold(true)
+	rows := table.New().Border(lipgloss.NormalBorder()).BorderStyle(t.fg(t.line)).
+		BorderTop(false).BorderBottom(false).BorderLeft(false).BorderRight(false).BorderColumn(false).BorderHeader(true).
+		Headers("Lesson", "Box", "Rounds", "Recent", "Last", "A goal", "Due").
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return head.PaddingRight(2)
+			}
+			return lipgloss.NewStyle().PaddingRight(2)
+		})
+	recent := func(records []Record) (string, string, string) {
+		var bars strings.Builder
+		for _, c := range m.recentCells(records, 8) {
+			bars.WriteString(c.style.Render(c.text))
+		}
+		last := records[len(records)-1]
+		seconds, goals := int64(0), 0
+		for _, r := range records[max(0, len(records)-5):] {
+			seconds, goals = seconds+r.Seconds, goals+r.Goals
+		}
+		return bars.String(), t.fg(m.passColour(last)).Render(fmt.Sprintf("%d of %d", last.Clean, last.Goals)),
+			sub.Render(fmt.Sprintf("%.1fs", float64(seconds)/float64(max(1, goals))))
+	}
+	count := 0
+	for _, l := range m.catalog.Lessons {
+		item := m.items[l.ID]
+		if len(item.Recent) == 0 {
+			continue
+		}
+		count++
+		bars, last, pace := recent(item.Recent)
+		rows.Row(t.fg(t.levels[item.Level()]).Render(symbols[item.Level()])+" "+t.fg(t.text).Render(l.Title),
+			t.pips(item.Box), sub.Render(fmt.Sprint(item.Rounds)), bars, last, pace, sub.Render(due(item, today)))
+	}
+	var mixed []Record
+	for _, r := range m.records {
+		if r.Result == "round" && r.Kind == "mixed" {
+			mixed = append(mixed, r)
+		}
+	}
+	if len(mixed) > 0 {
+		bars, last, pace := recent(mixed)
+		rows.Row(t.fg(t.key).Render("◆")+" "+t.fg(t.text).Render("Mixed practice"), "", sub.Render(fmt.Sprint(len(mixed))),
+			bars, last, pace, "")
+	}
+	lessons := sub.Render("No rounds yet.")
+	if count+len(mixed) > 0 {
+		lessons = rows.Width(w - 4).String()
+	}
+	return tiles + "\n" + m.strip(w) + "\n" +
+		t.card("Lessons", "recent rounds, oldest first", lessons, w, lipgloss.Height(lessons)+2, false)
 }

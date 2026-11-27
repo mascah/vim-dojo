@@ -24,8 +24,6 @@ var (
 	bold     = lipgloss.NewStyle().Bold(true)
 	faint    = lipgloss.NewStyle().Faint(true)
 	selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-	levels   = []lipgloss.Style{faint, lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("2"))}
 )
 
 func main() {
@@ -111,8 +109,7 @@ type model struct {
 	left, right   int  // the row in the practice pane and in the detail pane
 	inDetail      bool // the detail pane has the focus
 	dialog        bool // mixed practice's setup is open
-	scroll        int  // stats' first line
-	page          viewport.Model
+	page, stats   viewport.Model
 	pending       Planned // the round a page starts
 	fromSession   bool
 	session       []Planned // the rest of today's session once it has started
@@ -205,7 +202,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.screen == pageScreen:
 			return m, m.pageKey(msg)
 		case m.screen == statsScreen:
-			m.scrollKey(msg.String(), len(m.statsLines()))
+			return m, m.statsKey(msg)
 		default:
 			return m, m.homeKey(msg)
 		}
@@ -221,7 +218,9 @@ func (m *model) homeKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
 	case key.Matches(msg, keys.Stats):
-		m.screen, m.scroll = statsScreen, 0
+		m.screen = statsScreen
+		m.layout()
+		m.stats.GotoTop()
 	case key.Matches(msg, keys.Mixed):
 		m.dialog = true
 	case key.Matches(msg, keys.Back), key.Matches(msg, keys.Left):
@@ -297,25 +296,18 @@ func (m *model) pageKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *model) scrollKey(key string, lines int) {
-	page := m.bodyHeight(lines, "")
-	switch key {
-	case "q", "esc":
+func (m *model) statsKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back), key.Matches(msg, keys.Stats):
 		m.screen = homeScreen
-	case "j", "down":
-		m.scroll++
-	case "k", "up":
-		m.scroll--
-	case "space", "f", "pgdown", "ctrl+d":
-		m.scroll += page
-	case "b", "pgup", "ctrl+u":
-		m.scroll -= page
-	case "g", "home":
-		m.scroll = 0
-	case "G", "end":
-		m.scroll = lines
+	case key.Matches(msg, keys.Top):
+		m.stats.GotoTop()
+	case key.Matches(msg, keys.Bottom):
+		m.stats.GotoBottom()
+	default:
+		m.stats, _ = m.stats.Update(msg)
 	}
-	m.scroll = max(0, min(m.scroll, lines-page))
+	return nil
 }
 
 // mixedLessons is every lesson of the chosen sections, or with none chosen,
@@ -497,7 +489,7 @@ func (m *model) View() tea.View {
 	case m.screen == pageScreen:
 		content = m.pageView()
 	case m.screen == statsScreen:
-		content = m.window(m.statsLines(), faint.Render("j k scroll · q back"))
+		content = m.statsView()
 	case m.dialog:
 		content = m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
 	default:
@@ -510,12 +502,11 @@ func (m *model) View() tea.View {
 	return v
 }
 
-// window shows the lines from the scroll position, with a footer, which
-// may take several lines.
+// window shows the first lines that fit, with a footer, which may take
+// several lines.
 func (m *model) window(lines []string, footer string) string {
 	height := m.bodyHeight(len(lines), footer)
-	end := min(len(lines), m.scroll+height)
-	shown := lines[min(m.scroll, end):end]
+	shown := lines[:min(len(lines), height)]
 	return strings.Join(shown, "\n") + strings.Repeat("\n", height-len(shown)+1) + footer
 }
 
@@ -524,43 +515,6 @@ func (m *model) bodyHeight(lines int, footer string) int {
 		return max(1, m.height-strings.Count(footer, "\n")-1)
 	}
 	return lines
-}
-
-// statsLines shows, for each lesson with rounds, the clean count and the
-// seconds per goal of its last five learn and review rounds.
-func (m *model) statsLines() []string {
-	lines := []string{bold.Render("Stats") + "   recent rounds, oldest first: clean of goals, seconds per goal", ""}
-	for _, l := range m.catalog.Lessons {
-		item := m.items[l.ID]
-		if len(item.Recent) == 0 {
-			continue
-		}
-		lines = append(lines, "  "+levels[item.Level()].Render(symbols[item.Level()])+" "+
-			pad(truncate(l.Title, 19), 20)+recent(item.Recent))
-	}
-	var mixed []Record
-	for _, r := range m.records {
-		if r.Result == "round" && r.Kind == "mixed" {
-			mixed = append(mixed, r)
-		}
-	}
-	if len(mixed) > 0 {
-		lines = append(lines, "", "  "+pad("Mixed practice", 20)+recent(mixed))
-	}
-	if len(lines) == 2 {
-		lines = append(lines, "  No rounds yet.")
-	}
-	return lines
-}
-
-// recent is the last five rounds: clean of goals, and seconds per goal.
-func recent(records []Record) string {
-	var rounds []string
-	for _, r := range records[max(0, len(records)-5):] {
-		rounds = append(rounds, fmt.Sprintf("%d/%d %4.1fs", r.Clean, r.Goals,
-			float64(r.Seconds)/float64(max(1, r.Goals))))
-	}
-	return strings.Join(rounds, "   ")
 }
 
 // keys are the shell's bindings, which the help line reads its text from.
