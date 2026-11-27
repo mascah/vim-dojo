@@ -264,6 +264,7 @@ func TestPage(t *testing.T) {
 	m.refresh()
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	m.Update(key("j"))
+	m.Update(key("j"))
 	m.Update(key("enter"))
 	if m.view != pageView || m.pending.Lesson.ID != "modes" || m.pending.Kind != "learn" {
 		t.Fatalf("Enter on the first lesson: view %d %+v", m.view, m.pending)
@@ -335,6 +336,107 @@ func TestFinish(t *testing.T) {
 	// shell-stats: the lesson's recent round, clean of goals and seconds per goal.
 	m.Update(key("s"))
 	if view := plain(m.View()); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
+		t.Fatalf("stats:\n%s", view)
+	}
+}
+
+// mixed-round: goals from more than one learned lesson, leaning toward due
+// and shaky ones, at most a round's worth from each, and no box moves after.
+// timed: a time limit asks for as many goals as it might take.
+func TestMixed(t *testing.T) {
+	c := catalog(t)
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	write(t, dir, round("modes", "learn", 9, true, now-40*86400), round("hjkl", "learn", 9, true, now),
+		round("word", "learn", 9, true, now-40*86400), round("word", "review", 9, true, now-30*86400),
+		round("word", "review", 9, true, now-20*86400), round("word", "review", 9, true, now))
+	records := Records(dir)
+	learned := []*Lesson{c.ByID["modes"], c.ByID["hjkl"], c.ByID["word"]}
+	count := map[string]int{}
+	for range 50 {
+		r := Draw(c, Planned{Kind: "mixed", Lessons: learned, Count: 20}, records)
+		if len(r.Goals) != 20 || r.Kind != "mixed" || r.Demo || r.Technique != "" || r.Limit != 0 {
+			t.Fatalf("mixed round %+v", r)
+		}
+		lessons := map[string]int{}
+		for _, g := range r.Goals {
+			lessons[g.Lesson]++
+			count[g.Lesson]++
+		}
+		if len(lessons) < 2 || lessons["modes"]+lessons["hjkl"]+lessons["word"] != 20 {
+			t.Fatalf("goals from %v", lessons)
+		}
+	}
+	// modes is due, hjkl shaky, word solid and not due.
+	if !(count["modes"] > count["word"] && count["hjkl"] > count["word"]) {
+		t.Fatalf("does not lean toward due and shaky: %v", count)
+	}
+	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned[:1], Count: 20}, records); len(r.Goals) != 10 {
+		t.Fatalf("one lesson gave %d goals", len(r.Goals))
+	}
+	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned, Limit: 120}, records); r.Limit != 120 || len(r.Goals) != 30 {
+		t.Fatalf("timed round of %d goals, limit %d", len(r.Goals), r.Limit)
+	}
+	before := State(c, records)["modes"].Box
+	write(t, dir, map[string]any{"id": "mixed", "result": "round", "kind": "mixed", "clean": 0, "goals": 20,
+		"passed": 0, "seconds": 60, "time": now + 1})
+	if State(c, Records(dir))["modes"].Box != before {
+		t.Fatal("a mixed round moved a box")
+	}
+}
+
+// The mixed row opens a view to pick the length and the sections; with none
+// chosen it takes every learned lesson. Its summary has no pass, and stats
+// show mixed rounds on a line of their own.
+func TestMixedShell(t *testing.T) {
+	c := catalog(t)
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	write(t, dir, round("modes", "learn", 9, true, now), round("hjkl", "learn", 9, true, now))
+	m := &model{catalog: c, state: dir}
+	m.refresh()
+	m.Update(key("j"))
+	if m.rows[m.cursor].kind != "mixed" {
+		t.Fatalf("no mixed row after the session: %+v", m.rows[m.cursor])
+	}
+	m.Update(key("enter"))
+	if view := plain(m.View()); m.view != mixedView || !strings.Contains(view, "every learned lesson (2)") ||
+		!strings.Contains(view, "‹ 20 goals ›") {
+		t.Fatalf("mixed view:\n%s", view)
+	}
+	m.Update(key("l"))
+	m.Update(key("l"))
+	m.Update(key("l"))
+	m.Update(key("j"))
+	m.Update(key(" "))
+	if view := plain(m.View()); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
+		!strings.Contains(view, "Entering Insert (4 lessons)") {
+		t.Fatalf("after choosing:\n%s", view)
+	}
+	_, cmd := m.Update(key("enter"))
+	var r Request
+	data, err := os.ReadFile(filepath.Join(dir, "round.json"))
+	if cmd == nil || err != nil || json.Unmarshal(data, &r) != nil || r.Kind != "mixed" || r.Limit != 300 {
+		t.Fatalf("request %s %v", data, err)
+	}
+	for _, g := range r.Goals {
+		if c.ByID[g.Lesson].Section != "entering-insert" {
+			t.Fatalf("goal outside the chosen section: %+v", g)
+		}
+	}
+	before := map[string]bool{}
+	for _, rec := range Records(dir) {
+		before[rec.Name] = true
+	}
+	write(t, dir, map[string]any{"id": "mixed", "result": "round", "kind": "mixed", "clean": 11, "goals": 14,
+		"passed": 0, "seconds": 300, "time": now + 1})
+	m.Update(roundDone{planned: Planned{Kind: "mixed", Limit: 300}, request: r, before: before})
+	view := plain(m.View())
+	if !strings.Contains(view, "Mixed practice  ·  11 of 14 clean  ·  5:00") || strings.Contains(view, "passed") {
+		t.Fatalf("mixed summary:\n%s", view)
+	}
+	m.Update(key("s"))
+	if view := plain(m.View()); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
 		t.Fatalf("stats:\n%s", view)
 	}
 }

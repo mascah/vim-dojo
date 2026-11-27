@@ -89,7 +89,17 @@ const (
 	mapView view = iota
 	pageView
 	statsView
+	mixedView
 )
+
+// The lengths a mixed round can have: a number of goals, or minutes.
+var lengths = []struct {
+	label        string
+	count, limit int
+}{{"10 goals", 10, 0}, {"20 goals", 20, 0}, {"40 goals", 40, 0},
+	{"2 minutes", 0, 120}, {"5 minutes", 0, 300}, {"10 minutes", 0, 600}}
+
+const defaultLength = 1
 
 // row is one line of the map. Rows with a kind can be selected.
 type row struct {
@@ -113,6 +123,9 @@ type model struct {
 	session       []Planned // the rest of today's session once it has started
 	sessionSize   int
 	banner        []string
+	length        int             // the mixed round's, in lengths
+	chosen        map[string]bool // the sections a mixed round is over
+	mixCursor     int
 }
 
 func (m *model) Init() tea.Cmd { return nil }
@@ -210,7 +223,7 @@ func (m *model) mapRows() []row {
 		}
 	}
 	rows = append(rows, row{text: truncate(fmt.Sprintf("  ▶ %-29s%s", label, strings.Join(parts, "  ·  ")), 80),
-		kind: "session"}, row{})
+		kind: "session"}, row{text: "  ▶ Mixed practice", kind: "mixed"}, row{})
 
 	for _, section := range append(m.catalog.Sections, Section{ID: "custom", Name: "Custom"}) {
 		lessons := m.catalog.InSection(section.ID)
@@ -277,6 +290,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollKey(key, len(m.pageLines()))
 		case statsView:
 			m.scrollKey(key, len(m.statsLines()))
+		case mixedView:
+			return m, m.mixedKey(key)
 		}
 	}
 	return m, nil
@@ -317,6 +332,11 @@ func (m *model) mapKey(key string) tea.Cmd {
 			return m.open(Planned{Kind: kind, Lesson: l}, false)
 		case "review":
 			return m.start(Planned{Kind: "section", Section: r.id}, false)
+		case "mixed":
+			m.view = mixedView
+			if m.chosen == nil {
+				m.chosen, m.length = map[string]bool{}, defaultLength
+			}
 		}
 	}
 	return nil
@@ -350,6 +370,91 @@ func (m *model) scrollKey(key string, lines int) {
 		m.scroll = lines
 	}
 	m.scroll = max(0, min(m.scroll, lines-page))
+}
+
+// mixedSections lists the sections a mixed round can be over, Custom too
+// when it has lessons.
+func (m *model) mixedSections() []Section {
+	sections := m.catalog.Sections
+	if len(m.catalog.InSection("custom")) > 0 {
+		sections = append(sections[:len(sections):len(sections)], Section{ID: "custom", Name: "Custom"})
+	}
+	return sections
+}
+
+// mixedLessons is every lesson of the chosen sections, or with none chosen,
+// every lesson learned.
+func (m *model) mixedLessons() []*Lesson {
+	var lessons []*Lesson
+	for _, l := range m.catalog.Lessons {
+		if len(m.chosen) == 0 && m.items[l.ID].Box > 0 || m.chosen[l.Section] {
+			lessons = append(lessons, l)
+		}
+	}
+	return lessons
+}
+
+func (m *model) mixedKey(key string) tea.Cmd {
+	sections := m.mixedSections()
+	switch key {
+	case "q", "esc":
+		m.view = mapView
+	case "j", "down":
+		m.mixCursor = min(m.mixCursor+1, len(sections)-1)
+	case "k", "up":
+		m.mixCursor = max(m.mixCursor-1, 0)
+	case "h", "left":
+		m.length = max(m.length-1, 0)
+	case "l", "right":
+		m.length = min(m.length+1, len(lengths)-1)
+	case " ", "x":
+		id := sections[m.mixCursor].ID
+		if m.chosen[id] {
+			delete(m.chosen, id)
+		} else {
+			m.chosen[id] = true
+		}
+	case "enter":
+		if lessons := m.mixedLessons(); len(lessons) > 0 {
+			m.view = mapView
+			length := lengths[m.length]
+			return m.start(Planned{Kind: "mixed", Lessons: lessons, Count: length.count, Limit: length.limit}, false)
+		}
+	}
+	return nil
+}
+
+func (m *model) mixedLines() []string {
+	lessons := len(m.mixedLessons())
+	over := fmt.Sprintf("every learned lesson (%d)", lessons)
+	if len(m.chosen) > 0 {
+		var names []string
+		for _, s := range m.mixedSections() {
+			if m.chosen[s.ID] {
+				names = append(names, s.Name)
+			}
+		}
+		over = fmt.Sprintf("%s (%d lessons)", strings.Join(names, ", "), lessons)
+	} else if lessons == 0 {
+		over = "nothing learned yet; choose sections below"
+	}
+	lines := []string{bold.Render("Mixed practice") + "   goals across lessons, keys hidden, no box moves", "",
+		"  Length   ‹ " + lengths[m.length].label + " ›", "  Over     " + truncate(over, 68), ""}
+	for i, s := range m.mixedSections() {
+		learned, all := 0, m.catalog.InSection(s.ID)
+		for _, l := range all {
+			if m.items[l.ID].Box > 0 {
+				learned++
+			}
+		}
+		mark := map[bool]string{true: "[x]", false: "[ ]"}[m.chosen[s.ID]]
+		text := fmt.Sprintf("  %s %s%d of %d learned", mark, pad(s.Name, 22), learned, len(all))
+		if i == m.mixCursor {
+			text = selected.Render("›" + text[1:])
+		}
+		lines = append(lines, text)
+	}
+	return lines
 }
 
 // open shows a lesson's page before its round, or starts a lesson without one.
@@ -429,16 +534,19 @@ func (m *model) finish(done roundDone) {
 	}
 	finished := counts["clean"] + counts["unclean"] + counts["skipped"]
 	if round == nil {
-		m.banner = []string{fmt.Sprintf("Left %s after %d of %d goals, %d clean. Nothing was rescheduled.",
-			title, finished, len(done.request.Goals), counts["clean"])}
+		of := fmt.Sprintf(" of %d", len(done.request.Goals))
+		if done.request.Limit > 0 {
+			of = ""
+		}
+		m.banner = []string{fmt.Sprintf("Left %s after %d%s goals, %d clean. Nothing was rescheduled.",
+			title, finished, of, counts["clean"])}
 		m.session = nil
 	} else {
-		outcome := "not passed"
-		if round.Pass() {
-			outcome = "passed"
+		m.banner = []string{fmt.Sprintf("%s  ·  %d of %d clean  ·  %d:%02d",
+			title, round.Clean, round.Goals, round.Seconds/60, round.Seconds%60)}
+		if round.Kind != "mixed" {
+			m.banner[0] += map[bool]string{true: "  ·  passed", false: "  ·  not passed"}[round.Pass()]
 		}
-		m.banner = []string{fmt.Sprintf("%s  ·  %d of %d clean  ·  %d:%02d  ·  %s",
-			title, round.Clean, round.Goals, round.Seconds/60, round.Seconds%60, outcome)}
 		if placed > 0 {
 			m.banner = append(m.banner, fmt.Sprintf("%d %s placed as known.", placed,
 				map[bool]string{true: "lesson", false: "lessons"}[placed == 1]))
@@ -456,6 +564,8 @@ func (m *model) View() string {
 		return m.window(m.pageLines(), faint.Render("Enter start the round · j k scroll · q back"))
 	case statsView:
 		return m.window(m.statsLines(), faint.Render("j k scroll · q back"))
+	case mixedView:
+		return m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
 	}
 	return m.mapView()
 }
@@ -564,16 +674,30 @@ func (m *model) statsLines() []string {
 		if len(item.Recent) == 0 {
 			continue
 		}
-		var rounds []string
-		for _, r := range item.Recent[max(0, len(item.Recent)-5):] {
-			rounds = append(rounds, fmt.Sprintf("%d/%d %4.1fs", r.Clean, r.Goals,
-				float64(r.Seconds)/float64(max(1, r.Goals))))
-		}
 		lines = append(lines, "  "+levels[item.Level()].Render(symbols[item.Level()])+" "+
-			pad(truncate(l.Title, 19), 20)+strings.Join(rounds, "   "))
+			pad(truncate(l.Title, 19), 20)+recent(item.Recent))
+	}
+	var mixed []Record
+	for _, r := range m.records {
+		if r.Result == "round" && r.Kind == "mixed" {
+			mixed = append(mixed, r)
+		}
+	}
+	if len(mixed) > 0 {
+		lines = append(lines, "", "  "+pad("Mixed practice", 20)+recent(mixed))
 	}
 	if len(lines) == 2 {
 		lines = append(lines, "  No rounds yet.")
 	}
 	return lines
+}
+
+// recent is the last five rounds: clean of goals, and seconds per goal.
+func recent(records []Record) string {
+	var rounds []string
+	for _, r := range records[max(0, len(records)-5):] {
+		rounds = append(rounds, fmt.Sprintf("%d/%d %4.1fs", r.Clean, r.Goals,
+			float64(r.Seconds)/float64(max(1, r.Goals))))
+	}
+	return strings.Join(rounds, "   ")
 }

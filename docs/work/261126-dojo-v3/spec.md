@@ -537,4 +537,18 @@ only; the v2 map keeps working until slice 5 replaces it.
      scheduling, the plan, section draws, the map, pages, and stats are
      tested in `dojo_test.go`; `test/typing.sh` plays a round from the
      shell through tmux, finishing one and quitting another.
-6. **Mixed practice** (mixed-round, timed).
+6. **Mixed practice** (mixed-round, timed). Done 2026-11-26:
+   - A map row under the session opens a view to choose sections and a
+     length: 10, 20, or 40 goals, or 2, 5, or 10 minutes, default 20 goals.
+     With no section chosen the round is over every learned lesson; with
+     some, over all their lessons, new ones included.
+   - `Mixed` in `dojo.go` picks each goal's lesson at random, weight 3 when
+     due, 2 when shaky, 1 otherwise, and takes at most ten from a lesson,
+     the start of its round, then shuffles. A timed round asks for one goal
+     per four seconds of its limit, and the request carries `limit`.
+   - The runner ends a timed round at the limit from a timer; the goal under
+     way is not counted. If the goals run out first it goes round them again
+     rather than drawing new ones mid-round, where queued keys would run
+     into the solutions it plays.
+   - The round record has id `mixed` and no technique, so `State` moves no
+     box; stats show mixed rounds on a line of their own.

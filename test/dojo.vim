@@ -436,6 +436,41 @@ try
   DojoClose
   call assert_equal([], filter(s:Records(), 'v:val.result ==# "placed"'))
 
+  " mixed-round: goals from more than one lesson with no keys shown, and a
+  " round record that names no lesson, so it moves no box.
+  let g:vim_dojo_state_dir = s:state . '/mixed'
+  let s:goals = s:Lesson('quote', 'mixed').goals[: 1] + s:Lesson('dot', 'mixed').goals[: 1]
+  call vim_dojo#Start({'kind': 'mixed', 'technique': '', 'goals': s:goals})
+  call assert_match('Mixed practice  ·  1/4', s:Panel())
+  call assert_notmatch('Keys  ', s:Panel())
+  let s:lessons = {}
+  for s:goal in range(4)
+    let s:lessons[vim_dojo#Task().technique] = 1
+    call s:Solve()
+  endfor
+  call assert_equal(['dot', 'quote'], sort(keys(s:lessons)))
+  call assert_match('4 of 4 clean', s:Panel())
+  call assert_notmatch('passed', s:Panel())
+  DojoClose
+  let s:mixed = filter(s:Records(), 'v:val.result ==# "round"')
+  call assert_equal([['mixed', 'mixed', 4, 4, 0]], map(copy(s:mixed),
+        \ '[v:val.id, v:val.kind, v:val.clean, v:val.goals, has_key(v:val, "technique")]'))
+
+  " timed: at the limit the round ends where it stands, and the goal under
+  " way does not count. Goals that run out first come round again.
+  let g:vim_dojo_state_dir = s:state . '/timed'
+  call vim_dojo#Start({'kind': 'mixed', 'technique': '', 'limit': 2, 'goals': s:goals})
+  call assert_match('Mixed practice  ·  1  ·  0:0[12] left', s:Panel())
+  for s:goal in range(5)
+    call s:Solve()
+  endfor
+  call assert_match('Mixed practice  ·  6  ·', s:Panel())
+  sleep 2500m
+  call assert_match('5 of 5 clean  ·  0:02', s:Panel())
+  DojoClose
+  call assert_equal([['mixed', 5, 5]], map(filter(s:Records(), 'v:val.result ==# "round"'),
+        \ '[v:val.kind, v:val.clean, v:val.goals]'))
+
 
   " Playing solutions leaves the learner's history, @:, and clipboard alone,
   " and key names cannot pass for the letters inside them.

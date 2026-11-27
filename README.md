@@ -28,6 +28,7 @@ under `~/.vim/pack/dojo/start/vim-dojo`. It is the dojo's only Vim command.
 Vim Dojo                                    2 due today · 1 in inbox
 
   ▶ Start today's session        review w b e  ·  learn I A
+  ▶ Mixed practice
 
 Foundations           ●●◐◐       2 of 4 solid
   ● modes and Esc     solid     due in 6 days
@@ -58,6 +59,13 @@ Every section ends in a review: twenty goals drawn evenly from its lessons,
 with the keys hidden. Take it whenever you like. Passing it places the
 section's new lessons as already known, so you can skip what you know.
 Not passing changes nothing.
+
+Mixed practice draws goals across every lesson you have learned, leaning
+toward due and shaky ones, with the keys hidden. In its view, Space on a
+section limits the round to the sections you choose, and `h` and `l` set its
+length: 10, 20, or 40 goals, or 2, 5, or 10 minutes. A timed round ends at
+the limit, and goes round its goals again if you get through them first.
+Mixed rounds move no lesson's box; stats show them on a line of their own.
 
 ## Practising
 

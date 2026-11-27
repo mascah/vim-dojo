@@ -20,6 +20,8 @@ const (
 	roundLength   = 10
 	sectionLength = 20
 	scenarioTail  = 3
+	// A timed mixed round asks for a goal per this many seconds of its limit.
+	secondsPerGoal = 4
 )
 
 // v2 wrote solved, assisted, and recalled; they still mark a drill as tried.
@@ -305,11 +307,14 @@ func State(c *Catalog, records []Record) map[string]*Item {
 	return state
 }
 
-// Planned is a round still to be drawn: its kind and its lesson or section.
+// Planned is a round still to be drawn: its kind and its lesson or section,
+// or for a mixed round its lessons and how many goals or seconds it lasts.
 type Planned struct {
-	Kind    string
-	Lesson  *Lesson
-	Section string
+	Kind         string
+	Lesson       *Lesson
+	Section      string
+	Lessons      []*Lesson
+	Count, Limit int
 }
 
 // Plan is today's session: a review round for each of up to three due
@@ -361,6 +366,7 @@ type Request struct {
 	Demo      bool     `json:"demo"`
 	Place     []string `json:"place"`
 	Drills    string   `json:"drills"`
+	Limit     int      `json:"limit,omitempty"` // seconds, for a timed mixed round
 }
 
 // Order lists a lesson's drills least recently tried first, and among those
@@ -411,6 +417,9 @@ func Goals(l *Lesson, records []Record) []Goal {
 // none twice before all have come. Passing it places the section's new lessons.
 func Draw(c *Catalog, p Planned, records []Record) Request {
 	state := State(c, records)
+	if p.Kind == "mixed" {
+		return Mixed(c, p, state, records, Day(time.Now().Unix()))
+	}
 	if p.Section == "" {
 		return Request{Kind: p.Kind, Technique: p.Lesson.ID, Goals: Goals(p.Lesson, records),
 			Demo: p.Kind == "learn" && state[p.Lesson.ID].Rounds == 0, Place: []string{}, Drills: c.Drills}
@@ -432,9 +441,59 @@ func Draw(c *Catalog, p Planned, records []Record) Request {
 	return r
 }
 
+// Mixed draws a mixed round over the planned lessons, each goal from a
+// lesson picked at random, three times as often when it is due and twice
+// when shaky. A lesson gives at most a round's worth, the start of its round.
+// A timed round asks for as many goals as its limit might take; the runner
+// ends it at the limit. It writes no lesson's record, so it moves no box.
+func Mixed(c *Catalog, p Planned, state map[string]*Item, records []Record, today int64) Request {
+	weight := func(l *Lesson) int {
+		switch item := state[l.ID]; {
+		case item.Box > 0 && item.Due <= today:
+			return 3
+		case item.Level() == 1:
+			return 2
+		}
+		return 1
+	}
+	count := p.Count
+	if p.Limit > 0 {
+		count = p.Limit / secondsPerGoal
+	}
+	share := make([]int, len(p.Lessons))
+	for range count {
+		total := 0
+		for i, l := range p.Lessons {
+			if share[i] < roundLength {
+				total += weight(l)
+			}
+		}
+		if total == 0 {
+			break
+		}
+		n := rand.IntN(total)
+		for i, l := range p.Lessons {
+			if share[i] < roundLength {
+				if n -= weight(l); n < 0 {
+					share[i]++
+					break
+				}
+			}
+		}
+	}
+	r := Request{Kind: "mixed", Limit: p.Limit, Place: []string{}, Drills: c.Drills}
+	for i, l := range p.Lessons {
+		r.Goals = append(r.Goals, Goals(l, records)[:share[i]]...)
+	}
+	rand.Shuffle(len(r.Goals), func(i, j int) { r.Goals[i], r.Goals[j] = r.Goals[j], r.Goals[i] })
+	return r
+}
+
 // Title is how a round is named in the shell and in Vim's panel.
 func (p Planned) Title(c *Catalog) string {
 	switch {
+	case p.Kind == "mixed":
+		return "Mixed practice"
 	case p.Section != "":
 		return "Section review  " + c.SectionName(p.Section)
 	case p.Kind == "learn":

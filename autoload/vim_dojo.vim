@@ -50,9 +50,10 @@ function! vim_dojo#Run(path) abort
 endfunction
 
 " Runs a round: {'kind', 'technique', 'goals'}, where kind is learn,
-" review, section, or free, and goals is a list of drills. `demo` asks for
-" the first goal to be demonstrated. A section round also names its
+" review, section, mixed, or free, and goals is a list of drills. `demo` asks
+" for the first goal to be demonstrated. A section round also names its
 " `section`, the section's `name`, and in `place` the lessons a pass places.
+" A `limit` in seconds ends the round there, if its goals last that long.
 function! vim_dojo#Start(round) abort
   call s:StopDemo()
   let techniques = {}
@@ -228,7 +229,10 @@ function! s:OpenRound(round) abort
   endfor
   call extend(s:session, {'round': round, 'tasks': tasks, 'technique': technique, 'index': 0,
         \ 'results': [], 'summary': 0, 'last': '', 'round_started': localtime(),
-        \ 'demo_first': get(round, 'demo', 0)})
+        \ 'demo_first': get(round, 'demo', 0), 'limit': get(round, 'limit', 0)})
+  if s:session.limit > 0
+    let s:session.limit_timer = timer_start(s:session.limit * 1000, function('s:TimeUp'))
+  endif
   call s:OpenTask()
 endfunction
 
@@ -660,6 +664,7 @@ endfunction
 " any file the learner changed meanwhile.
 function! s:Close() abort
   call s:StopDemo()
+  call timer_stop(get(s:session, 'limit_timer', -1))
   autocmd! vim_dojo_capture
   if get(s:, 'run')
     confirm qall
@@ -669,6 +674,25 @@ function! s:Close() abort
     call win_gotoid(s:session.edit)
   endif
   tabclose
+endfunction
+
+" At the limit the round ends where it stands; the goal under way is not
+" counted. A round closed meanwhile is left alone, and a window the learner
+" closed is put back to show the summary.
+function! s:TimeUp(timer) abort
+  if get(s:session, 'limit_timer', -1) != a:timer || s:session.summary
+        \ || !s:WindowExists('edit') && !s:WindowExists('panel')
+    return
+  endif
+  call s:StopDemo()
+  if !s:WindowExists('edit') || !s:WindowExists('panel')
+    call s:Open()
+  endif
+  " Leave Insert, Visual, or the command line; the key is not counted.
+  if mode() !=# 'n'
+    call feedkeys("\<Esc>", 'n')
+  endif
+  call s:EndRound()
 endfunction
 
 " Says where the attempt stands when asked to report. A cursor move that gets
@@ -729,7 +753,13 @@ function! s:Finish(clean, keys) abort
   call add(s:session.results, entry)
   let s:session.last = 'Last: ' . s:Outcome(entry)
   let s:session.index += 1
-  if s:session.index < len(s:session.round.goals)
+  " A timed round whose goals run out before its limit goes round them
+  " again. Their targets were worked out as it opened, so no solution is
+  " played while the learner's keys may still be queued.
+  if s:session.limit > 0 && s:session.index == len(s:session.tasks)
+    call extend(s:session.tasks, deepcopy(s:session.tasks[: len(s:session.round.goals) - 1]))
+  endif
+  if s:session.index < len(s:session.tasks)
     call s:OpenTask()
   else
     call s:EndRound()
@@ -749,9 +779,11 @@ function! s:Outcome(entry) abort
   return join(parts, ' · ')
 endfunction
 
-" A learn or review round leaves a record that schedules its technique.
-" Leaving a round early leaves none, so it changes no schedule.
+" A learn or review round leaves a record that schedules its technique; a
+" mixed round's names none, so it feeds stats only. Leaving a round early
+" leaves none, so it changes no schedule.
 function! s:EndRound() abort
+  call timer_stop(get(s:session, 'limit_timer', -1))
   let round = s:session.round
   let clean = len(filter(copy(s:session.results), 'v:val.clean'))
   let goals = len(s:session.results)
@@ -761,6 +793,8 @@ function! s:EndRound() abort
         \ 'passed': s:session.passed, 'seconds': s:session.seconds}
   if index(['learn', 'review'], round.kind) >= 0
     call s:Write(extend(record, {'id': round.technique, 'technique': round.technique}))
+  elseif round.kind ==# 'mixed'
+    call s:Write(extend(record, {'id': 'mixed'}))
   endif
   " A passed section review places the lessons its request names, the
   " section's new ones, as known. Its own record names no technique, so it
@@ -774,7 +808,8 @@ function! s:EndRound() abort
     endfor
   endif
   let s:session.summary = 1
-  setlocal nomodifiable
+  " The time limit can end a round from outside the practice window.
+  call setbufvar(s:session.edit_buf, '&modifiable', 0)
   call s:Render()
 endfunction
 
@@ -897,7 +932,8 @@ function! s:Title() abort
   let technique = s:session.technique
   let title = kind ==# 'learn' ? 'Learn  ' . technique.title
         \ : kind ==# 'review' ? 'Review  ' . technique.title
-        \ : kind ==# 'section' ? 'Section review  ' . s:session.round.name : 'Free practice'
+        \ : kind ==# 'section' ? 'Section review  ' . s:session.round.name
+        \ : kind ==# 'mixed' ? 'Mixed practice' : 'Free practice'
   return 'Vim Dojo  ·  ' . title
 endfunction
 
@@ -935,7 +971,12 @@ function! s:Render() abort
     let task = s:session.task
     let technique = s:session.technique
     let goal = s:session.step > 0 ? 'Return to the original call.' : task.goal
-    let lines = [printf('%s  ·  %d/%d', s:Title(), s:session.index + 1, len(s:session.round.goals)), '']
+    if s:session.limit > 0
+      let left = max([0, s:session.limit - (localtime() - s:session.round_started)])
+      let lines = [printf('%s  ·  %d  ·  %d:%02d left', s:Title(), s:session.index + 1, left / 60, left % 60), '']
+    else
+      let lines = [printf('%s  ·  %d/%d', s:Title(), s:session.index + 1, len(s:session.round.goals)), '']
+    endif
     if s:session.round.kind ==# 'learn'
       " A learn round keeps the lesson's keys in view for every goal.
       let width = max(map(copy(technique.keys), 'strdisplaywidth(v:val[0])'))
