@@ -4,6 +4,7 @@ let s:last_key = reltime()
 let s:pseudo_keys = ['<CursorHold>', '<Ignore>', '<FocusGained>', '<FocusLost>', '<MouseMove>']
 " Registers a solution or demo may touch, restored afterwards. The unnamed
 " register goes last so it points where it pointed before.
+let s:history_saved = 0
 let s:registers = split('0123456789abcdefghijklmnopqrstuvwxyz-/', '\zs') + ['"']
 
 " A goal is clean when it is solved without a hint in at most par plus this
@@ -215,19 +216,28 @@ function! s:OpenRound(round) abort
     let id = get(goal, 'lesson', round.lesson)
     let generated[id] = add(get(generated, id, []), goal)
   endfor
-  for [id, goals] in items(generated)
-    let generated[id] = s:Generated(s:session.lessons[id], goals)
-  endfor
-  let tasks = []
-  for goal in round.goals
-    if get(goal, 'generated')
-      call add(tasks, remove(generated[get(goal, 'lesson', round.lesson)], 0))
-    else
-      let s:session.task = vim_dojo#drills#Instance(goal)
-      call s:Prepare()
-      call add(tasks, s:session.task)
-    endif
-  endfor
+  " Playing solutions only adds to the history, and copying a long one is
+  " slow, so it is copied once for the whole round, not for each play.
+  let history = s:History()
+  let s:history_saved = 1
+  try
+    for [id, goals] in items(generated)
+      let generated[id] = s:Generated(s:session.lessons[id], goals)
+    endfor
+    let tasks = []
+    for goal in round.goals
+      if get(goal, 'generated')
+        call add(tasks, remove(generated[get(goal, 'lesson', round.lesson)], 0))
+      else
+        let s:session.task = vim_dojo#drills#Instance(goal)
+        call s:Prepare()
+        call add(tasks, s:session.task)
+      endif
+    endfor
+  finally
+    let s:history_saved = 0
+    call s:PutHistory(history)
+  endtry
   " A mixed round asking for more goals than its lessons could give goes
   " round them, as a timed one does.
   let base = copy(tasks)
@@ -493,12 +503,6 @@ function! s:Isolated(Plays) abort
   set clipboard= nowrapscan
   try
     let result = a:Plays()
-    if has_key(snapshot.history, ':') && histnr(':') != snapshot.history[':'][0]
-      " @: cannot be set, so leave it repeating something harmless.
-      let s:session.running = 1
-      call feedkeys(":echo\<CR>", 'ntx')
-      let s:session.running = 0
-    endif
   finally
     let [&clipboard, &wrapscan] = [clipboard, wrapscan]
     call s:Restore(snapshot)
@@ -507,23 +511,35 @@ function! s:Isolated(Plays) abort
 endfunction
 
 function! s:Snapshot() abort
-  let history = {}
   " Only these keys can add to the history, and copying a long one is slow.
-  let touches = join(get(s:session.task, 'tokens', [':']), '') =~# '[/?:*#@]'
-  for type in touches ? ['/', ':'] : []
-    let entries = map(range(1, &history), {_, back -> histget(type, -back)})
-    let history[type] = [histnr(type), reverse(filter(entries, '!empty(v:val)'))]
-  endfor
+  let touches = !s:history_saved && join(get(s:session.task, 'tokens', [':']), '') =~# '[/?:*#@]'
   return {'registers': map(copy(s:registers), {_, name -> [name, getreginfo(name)]}),
-        \ 'history': history, 'char': getcharsearch(),
+        \ 'history': touches ? s:History() : {}, 'char': getcharsearch(),
         \ 'hlsearch': v:hlsearch, 'forward': v:searchforward}
 endfunction
 
-function! s:Restore(snapshot) abort
-  for [name, info] in a:snapshot.registers
-    call setreg(name, info)
+" The search and command history, oldest first, with each one's count.
+function! s:History() abort
+  let history = {}
+  for type in ['/', ':']
+    let entries = map(range(1, &history), {_, back -> histget(type, -back)})
+    let history[type] = [histnr(type), reverse(filter(entries, '!empty(v:val)'))]
   endfor
-  for [type, saved] in items(a:snapshot.history)
+  return history
+endfunction
+
+" Puts back a history s:History() copied. @: cannot be set, so when a
+" command ran it is left repeating something harmless.
+function! s:PutHistory(history) abort
+  if empty(a:history)
+    return
+  endif
+  if histnr(':') != a:history[':'][0]
+    let s:session.running = 1
+    call feedkeys(":echo\<CR>", 'ntx')
+    let s:session.running = 0
+  endif
+  for [type, saved] in items(a:history)
     if histnr(type) != saved[0]
       call histdel(type)
       for entry in saved[1]
@@ -531,6 +547,13 @@ function! s:Restore(snapshot) abort
       endfor
     endif
   endfor
+endfunction
+
+function! s:Restore(snapshot) abort
+  for [name, info] in a:snapshot.registers
+    call setreg(name, info)
+  endfor
+  call s:PutHistory(a:snapshot.history)
   call setcharsearch(a:snapshot.char)
   let v:hlsearch = a:snapshot.hlsearch
   let v:searchforward = a:snapshot.forward
