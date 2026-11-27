@@ -479,6 +479,9 @@ type roundDone struct {
 func (m *model) start(p Planned, fromSession bool) tea.Cmd {
 	if fromSession {
 		m.session = m.session[1:]
+	} else {
+		// A round outside the session can change what the session should be.
+		m.session = nil
 	}
 	request := Draw(m.catalog, p, m.records)
 	before := map[string]bool{}
@@ -496,6 +499,7 @@ func (m *model) start(p Planned, fromSession bool) tea.Cmd {
 	}
 	cmd := exec.Command("vim",
 		"-c", "set runtimepath^="+vimEscape(m.catalog.Root),
+		"-c", "runtime plugin/vim_dojo.vim", // :DojoNote, if not installed as a package
 		"-c", "call vim_dojo#Run("+vimString(path)+")")
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return roundDone{p, request, before, err} })
 }
@@ -534,7 +538,7 @@ func (m *model) finish(done roundDone) {
 	}
 	finished := counts["clean"] + counts["unclean"] + counts["skipped"]
 	if round == nil {
-		of := fmt.Sprintf(" of %d", len(done.request.Goals))
+		of := fmt.Sprintf(" of %d", max(done.request.Count, len(done.request.Goals)))
 		if done.request.Limit > 0 {
 			of = ""
 		}

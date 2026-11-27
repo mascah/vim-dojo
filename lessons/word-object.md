@@ -70,7 +70,7 @@ are on it. And remember what a word is: `user_id` is one word, but
                        {"name": "pollEvery", "at": "Every"}]},
      "lines": ["const {name} = 5", "", "func run() {", "    log.Println()", "}"],
      "goal": "Copy the name {name} and put it inside the empty Println() call.",
-     "solution": "yiw/(<CR>p"}
+     "solution": "yiw3j$P"}
   ]
 }
 ```

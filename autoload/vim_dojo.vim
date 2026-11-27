@@ -54,6 +54,7 @@ endfunction
 " for the first goal to be demonstrated. A section round also names its
 " `section`, the section's `name`, and in `place` the lessons a pass places.
 " A `limit` in seconds ends the round there, if its goals last that long.
+" A `count` larger than the goals repeats them up to that many.
 function! vim_dojo#Start(round) abort
   call s:StopDemo()
   let techniques = {}
@@ -227,6 +228,13 @@ function! s:OpenRound(round) abort
       call add(tasks, s:session.task)
     endif
   endfor
+  " A mixed round asking for more goals than its lessons could give goes
+  " round them, as a timed one does.
+  let base = copy(tasks)
+  while len(tasks) < get(round, 'count', 0)
+    call extend(tasks, deepcopy(base))
+  endwhile
+  let tasks = tasks[: max([get(round, 'count', 0), len(base)]) - 1]
   call extend(s:session, {'round': round, 'tasks': tasks, 'technique': technique, 'index': 0,
         \ 'results': [], 'summary': 0, 'last': '', 'round_started': localtime(),
         \ 'demo_first': get(round, 'demo', 0), 'limit': get(round, 'limit', 0)})
@@ -975,7 +983,7 @@ function! s:Render() abort
       let left = max([0, s:session.limit - (localtime() - s:session.round_started)])
       let lines = [printf('%s  ·  %d  ·  %d:%02d left', s:Title(), s:session.index + 1, left / 60, left % 60), '']
     else
-      let lines = [printf('%s  ·  %d/%d', s:Title(), s:session.index + 1, len(s:session.round.goals)), '']
+      let lines = [printf('%s  ·  %d/%d', s:Title(), s:session.index + 1, len(s:session.tasks)), '']
     endif
     if s:session.round.kind ==# 'learn'
       " A learn round keeps the lesson's keys in view for every goal.

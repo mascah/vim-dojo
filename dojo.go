@@ -367,6 +367,7 @@ type Request struct {
 	Place     []string `json:"place"`
 	Drills    string   `json:"drills"`
 	Limit     int      `json:"limit,omitempty"` // seconds, for a timed mixed round
+	Count     int      `json:"count,omitempty"` // goals, for a mixed round by count
 }
 
 // Order lists a lesson's drills least recently tried first, and among those
@@ -481,7 +482,11 @@ func Mixed(c *Catalog, p Planned, state map[string]*Item, records []Record, toda
 			}
 		}
 	}
+	// Too few lessons to fill the count, the runner goes round their goals.
 	r := Request{Kind: "mixed", Limit: p.Limit, Place: []string{}, Drills: c.Drills}
+	if p.Limit == 0 {
+		r.Count = count
+	}
 	for i, l := range p.Lessons {
 		r.Goals = append(r.Goals, Goals(l, records)[:share[i]]...)
 	}

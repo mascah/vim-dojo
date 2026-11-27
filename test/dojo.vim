@@ -471,6 +471,17 @@ try
   call assert_equal([['mixed', 5, 5]], map(filter(s:Records(), 'v:val.result ==# "round"'),
         \ '[v:val.kind, v:val.clean, v:val.goals]'))
 
+  " A mixed round asking for more goals than it was given goes round them
+  " until it has that many.
+  let g:vim_dojo_state_dir = s:state . '/counted'
+  call vim_dojo#Start({'kind': 'mixed', 'technique': '', 'count': 6, 'goals': s:goals})
+  call assert_match('Mixed practice  ·  1/6', s:Panel())
+  for s:goal in range(6)
+    call s:Solve()
+  endfor
+  call assert_match('6 of 6 clean', s:Panel())
+  DojoClose
+
 
   " Playing solutions leaves the learner's history, @:, and clipboard alone,
   " and key names cannot pass for the letters inside them.

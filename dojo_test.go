@@ -371,10 +371,10 @@ func TestMixed(t *testing.T) {
 	if !(count["modes"] > count["word"] && count["hjkl"] > count["word"]) {
 		t.Fatalf("does not lean toward due and shaky: %v", count)
 	}
-	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned[:1], Count: 20}, records); len(r.Goals) != 10 {
-		t.Fatalf("one lesson gave %d goals", len(r.Goals))
+	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned[:1], Count: 20}, records); len(r.Goals) != 10 || r.Count != 20 {
+		t.Fatalf("one lesson gave %d goals, count %d", len(r.Goals), r.Count)
 	}
-	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned, Limit: 120}, records); r.Limit != 120 || len(r.Goals) != 30 {
+	if r := Draw(c, Planned{Kind: "mixed", Lessons: learned, Limit: 120}, records); r.Limit != 120 || len(r.Goals) != 30 || r.Count != 0 {
 		t.Fatalf("timed round of %d goals, limit %d", len(r.Goals), r.Limit)
 	}
 	before := State(c, records)["modes"].Box
