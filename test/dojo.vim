@@ -172,6 +172,11 @@ try
   for s:file in glob(s:root . '/lessons/*.md', 0, 1)
     call assert_true(index(s:order, fnamemodify(s:file, ':t:r')) >= 0, s:file . ' is not in the outline')
   endfor
+  " lesson-files: every outline lesson is a Markdown page, and no lesson
+  " content is left in Vimscript or in loose JSON.
+  call assert_equal(sort(copy(s:order)), sort(map(glob(s:root . '/lessons/*.md', 0, 1), 'fnamemodify(v:val, ":t:r")')))
+  call assert_equal(['outline.json'], filter(readdir(s:root . '/lessons'), 'v:val !~# "\\.md$"'))
+  call assert_equal([], glob(s:root . '/autoload/vim_dojo/skills', 0, 1))
   for s:lesson in filter(vim_dojo#drills#Techniques(), 'has_key(v:val, "page")')
     let s:text = join(s:lesson.page, "\n")
     call assert_match('\n| Key | What it does |\n| --- | --- |\n| ', s:text, s:lesson.id)

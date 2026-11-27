@@ -495,8 +495,15 @@ only; the v2 map keeps working until slice 5 replaces it.
      `p` on a map row opens a page below the map.
    - `,` has no goals: from a fresh start it is never the shortest key. Its
      page teaches it.
-   - Until the last section lands, an outline id with no `.md` file falls
-     back to the v2 technique of that id, or of the ids renamed to it.
+   - A scenario may name `marked`, marks set before it starts, as
+     `{"a": "text the mark sits on"}`. Template values fill dict fields,
+     keys included.
+   - `para-object` uses scenarios only: a paragraph spans lines, which the
+     edit check cannot place. `word-object` draws on code snippets only.
+   - Done 2026-11-26: all 53 lessons are Markdown pages, one commit per
+     section. `autoload/vim_dojo/skills` and the v2 bridge are gone, and v2
+     drills the tests use live on as scenarios under their old ids. Page
+     length is checked at 150 to 260 words.
 5. **The shell** (shell-map, shell-page, shell-round, shell-stats,
    one-front-end, nothing-raw-persisted). Go module at the repository root.
    Ports `progress#State` and the session plan to Go, which then owns them;

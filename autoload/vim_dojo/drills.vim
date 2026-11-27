@@ -42,18 +42,10 @@ function! vim_dojo#drills#Techniques() abort
 endfunction
 
 function! s:Lessons() abort
-  let v2 = s:V2()
   let lessons = []
   for section in s:Outline()
     for id in section.lessons
-      let path = s:root . '/lessons/' . id . '.md'
-      if filereadable(path)
-        let lesson = vim_dojo#drills#Lesson(path)
-      elseif has_key(v2, id)
-        let lesson = v2[id]
-      else
-        continue
-      endif
+      let lesson = vim_dojo#drills#Lesson(s:root . '/lessons/' . id . '.md')
       let lesson.skill = section.id
       for drill in lesson.drills
         call extend(drill, {'skill': section.id, 'technique': id})
@@ -80,28 +72,6 @@ function! vim_dojo#drills#Lesson(path) abort
     call remove(page, -1)
   endwhile
   return extend(lesson, {'page': page, 'drills': get(lesson, 'scenarios', [])})
-endfunction
-
-" ponytail: a bridge while lessons move from autoload/vim_dojo/skills to
-" Markdown; it goes with the last of them.
-function! s:V2() abort
-  let v2 = {}
-  for skill in ['move', 'edit', 'objects', 'repeat', 'search', 'visual', 'registers', 'ex']
-    for technique in vim_dojo#skills#{skill}#Techniques()
-      let id = get(s:renamed, technique.id, technique.id)
-      if has_key(v2, id)
-        call extend(v2[id].drills, technique.drills)
-      else
-        let v2[id] = {'id': id, 'title': technique.keys, 'keys': [[technique.keys, technique.name]],
-              \ 'drills': technique.drills}
-      endif
-    endfor
-  endfor
-  for name in readdir(s:root . '/lessons', {name -> name =~# '\.json$' && name !=# 'outline.json'})
-    let lesson = json_decode(join(readfile(s:root . '/lessons/' . name), "\n"))
-    call extend(v2[lesson.id], lesson)
-  endfor
-  return v2
 endfunction
 
 " Fills a drill's template variables and works out everything that can be
