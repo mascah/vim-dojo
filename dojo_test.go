@@ -443,7 +443,7 @@ func TestMixed(t *testing.T) {
 	}
 }
 
-// The mixed row opens a view to pick the length and the sections; with none
+// The mixed row opens a dialog to pick the length and the sections; with none
 // chosen it takes every learned lesson. Its summary has no pass, and stats
 // show mixed rounds on a row of their own.
 func TestMixedShell(t *testing.T) {
@@ -458,16 +458,18 @@ func TestMixedShell(t *testing.T) {
 	}
 	m.Update(press("enter"))
 	if view := shown(m); !m.dialog || !strings.Contains(view, "every learned lesson (2)") ||
-		!strings.Contains(view, "‹ 20 goals ›") {
-		t.Fatalf("mixed view:\n%s", view)
+		!strings.Contains(view, "‹20›") {
+		t.Fatalf("mixed dialog:\n%s", view)
 	}
 	m.Update(press("l"))
 	m.Update(press("l"))
 	m.Update(press("l"))
+	if view := shown(m); !strings.Contains(view, "‹5›") {
+		t.Fatalf("after three lengths on:\n%s", view)
+	}
 	m.Update(press("j"))
 	m.Update(press("space"))
-	if view := shown(m); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
-		!strings.Contains(view, "Entering Insert (4 lessons)") {
+	if view := shown(m); !strings.Contains(view, "[x] Entering Insert") || !strings.Contains(view, "Entering Insert (4 lessons)") {
 		t.Fatalf("after choosing:\n%s", view)
 	}
 	_, cmd := m.Update(press("enter"))

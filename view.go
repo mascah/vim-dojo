@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -386,10 +387,17 @@ func (m *model) mixedPane(w, h int) string {
 	t := m.th
 	body := t.fg(t.muted).Width(w-4).PaddingLeft(1).Render("Goals drawn across the lessons you have learned, leaning toward "+
 		"due and shaky ones, with the keys hidden. A mixed round moves no lesson's box.") + "\n\n" +
-		" " + t.fg(t.muted).Render("Length  ") + t.fg(t.text).Render(lengths[m.length].label) + "\n" +
+		" " + t.fg(t.muted).Render("Length  ") + t.fg(t.text).Render(m.lengthLabel()) + "\n" +
 		" " + t.fg(t.muted).Render("Over    ") + t.fg(t.text).Render(m.over()) + "\n\n" +
 		t.fg(t.faint).Render(" Enter to choose a length and sections")
 	return t.card("Mixed practice", "", "\n"+body, w, h, false)
+}
+
+func (m *model) lengthLabel() string {
+	if l := lengths[m.length]; l.limit > 0 {
+		return l.label + " minutes"
+	}
+	return lengths[m.length].label + " goals"
 }
 
 func (m *model) over() string {
@@ -778,4 +786,57 @@ func (m *model) statsBody(w int) string {
 	}
 	return tiles + "\n" + m.strip(w) + "\n" +
 		t.card("Lessons", "recent rounds, oldest first", lessons, w, lipgloss.Height(lessons)+2, false)
+}
+
+// dialogView is mixed practice's setup, shown over the dashboard.
+func (m *model) dialogView() string {
+	t := m.th
+	width := max(34, min(58, m.width-4))
+	var options []string
+	for i, l := range lengths {
+		if i == 3 {
+			options = append(options, t.fg(t.muted).Render("goals  "))
+		}
+		// The chosen length is marked in the text too, for a terminal without colour.
+		if i == m.length {
+			options = append(options, lipgloss.NewStyle().Bold(true).Foreground(t.onAccent).Background(t.accent).Render("‹"+l.label+"›"))
+		} else {
+			options = append(options, t.fg(t.muted).Render(" "+l.label+" "))
+		}
+	}
+	options = append(options, t.fg(t.muted).Render("minutes"))
+	lines := []string{lipgloss.NewStyle().Bold(true).Foreground(t.text).Render("Mixed practice"),
+		t.fg(t.muted).Render("Goals across lessons, keys hidden, no box moves."), "",
+		t.fg(t.muted).Render("Length  ") + strings.Join(options, " "),
+		t.fg(t.muted).Render("Over    ") + t.fg(t.text).Render(truncate(m.over(), width-14)), ""}
+	for i, s := range m.sections() {
+		learned, all := 0, m.catalog.InSection(s.ID)
+		for _, l := range all {
+			if m.items[l.ID].Box > 0 {
+				learned++
+			}
+		}
+		box, style := "[ ]", t.fg(t.faint)
+		if m.chosen[s.ID] {
+			box, style = "[x]", t.fg(t.accent).Bold(true)
+		}
+		lines = append(lines, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), 24},
+			cell{fmt.Sprintf("%d of %d learned", learned, len(all)), t.fg(t.muted), 0}))
+	}
+	m.help.SetWidth(width - 6)
+	showAll := m.help.ShowAll
+	m.help.ShowAll = false
+	lines = append(lines, "", m.help.View(bindings{named(keys.Open, "enter", "start"), keys.Toggle,
+		named(keys.Left, "h/l", "length"), keys.Back}))
+	m.help.ShowAll = showAll
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(t.accent, t.key).
+		Padding(1, 2).Width(width).Render(strings.Join(lines, "\n"))
+}
+
+// overlay sets a dialog over the middle of a dimmed screen.
+func (m *model) overlay(base, dialog string) string {
+	x := max(0, (m.width-lipgloss.Width(dialog))/2)
+	y := max(0, (m.height-lipgloss.Height(dialog))/2)
+	back := m.th.fg(m.th.faint).Render(ansi.Strip(base))
+	return lipgloss.NewCompositor(lipgloss.NewLayer(back), lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)).Render()
 }

@@ -20,12 +20,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var (
-	bold     = lipgloss.NewStyle().Bold(true)
-	faint    = lipgloss.NewStyle().Faint(true)
-	selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-)
-
 func main() {
 	root, err := pluginRoot()
 	if err == nil {
@@ -90,8 +84,7 @@ const (
 var lengths = []struct {
 	label        string
 	count, limit int
-}{{"10 goals", 10, 0}, {"20 goals", 20, 0}, {"40 goals", 40, 0},
-	{"2 minutes", 0, 120}, {"5 minutes", 0, 300}, {"10 minutes", 0, 600}}
+}{{"10", 10, 0}, {"20", 20, 0}, {"40", 40, 0}, {"2", 0, 120}, {"5", 0, 300}, {"10", 0, 600}}
 
 const defaultLength = 1
 
@@ -351,26 +344,6 @@ func (m *model) dialogKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *model) mixedLines() []string {
-	lines := []string{bold.Render("Mixed practice") + "   goals across lessons, keys hidden, no box moves", "",
-		"  Length   ‹ " + lengths[m.length].label + " ›", "  Over     " + truncate(m.over(), 68), ""}
-	for i, s := range m.sections() {
-		learned, all := 0, m.catalog.InSection(s.ID)
-		for _, l := range all {
-			if m.items[l.ID].Box > 0 {
-				learned++
-			}
-		}
-		mark := map[bool]string{true: "[x]", false: "[ ]"}[m.chosen[s.ID]]
-		text := fmt.Sprintf("  %s %s%d of %d learned", mark, pad(s.Name, 22), learned, len(all))
-		if i == m.mixCursor {
-			text = selected.Render("›" + text[1:])
-		}
-		lines = append(lines, text)
-	}
-	return lines
-}
-
 // before shows a lesson's page ahead of its round, or starts a lesson without
 // one. In a session only a new lesson opens on its page.
 func (m *model) before(p Planned, fromSession bool) tea.Cmd {
@@ -485,36 +458,22 @@ func (m *model) View() tea.View {
 		m.layout()
 	}
 	var content string
-	switch {
-	case m.screen == pageScreen:
+	switch m.screen {
+	case pageScreen:
 		content = m.pageView()
-	case m.screen == statsScreen:
+	case statsScreen:
 		content = m.statsView()
-	case m.dialog:
-		content = m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
 	default:
 		content = m.homeView()
+		if m.dialog {
+			content = m.overlay(content, m.dialogView())
+		}
 	}
 	// Whatever a screen drew, nothing reaches past the window.
 	v := tea.NewView(lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(content))
 	v.AltScreen = true
 	v.WindowTitle = "Vim Dojo"
 	return v
-}
-
-// window shows the first lines that fit, with a footer, which may take
-// several lines.
-func (m *model) window(lines []string, footer string) string {
-	height := m.bodyHeight(len(lines), footer)
-	shown := lines[:min(len(lines), height)]
-	return strings.Join(shown, "\n") + strings.Repeat("\n", height-len(shown)+1) + footer
-}
-
-func (m *model) bodyHeight(lines int, footer string) int {
-	if m.height > 1 {
-		return max(1, m.height-strings.Count(footer, "\n")-1)
-	}
-	return lines
 }
 
 // keys are the shell's bindings, which the help line reads its text from.
