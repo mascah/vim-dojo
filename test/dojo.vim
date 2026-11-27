@@ -4,6 +4,9 @@ let s:state = tempname()
 let g:vim_dojo_state_dir = s:state . '/initial'
 let g:vim_dojo_drill_dir = s:state . '/custom'
 let g:vim_dojo_demo_delay = 0
+" The suite writes thousands of throwaway records; syncing each to disk
+" took most of its time.
+set nofsync
 call setline(1, 'An unsaved edit in the original window')
 let s:original = bufnr('%')
 let s:root = fnamemodify(expand('<sfile>:p'), ':h:h')
@@ -111,13 +114,17 @@ function! s:Walkable(task) abort
     endfor
     return cost <= limit
   endif
+  " Each line up or down takes a key.
+  if abs(a:task.target[0] - a:task.position[0]) > limit
+    return 0
+  endif
   new
   call setline(1, a:task.lines)
   call cursor(a:task.position)
   let frontier = [winsaveview()]
   let seen = {}
   let found = 0
-  for _ in range(limit + 1)
+  for depth in range(limit + 1)
     if !empty(filter(copy(frontier), '[v:val.lnum, v:val.col + 1] == a:task.target'))
       let found = 1
       break
@@ -126,9 +133,9 @@ function! s:Walkable(task) abort
     for view in frontier
       for key in ['h', 'j', 'k', 'l']
         call winrestview(view)
-        execute 'normal!' key
+        noautocmd execute 'normal!' key
         let state = filter(winsaveview(), 'index(["lnum", "col", "curswant"], v:key) >= 0')
-        if !has_key(seen, string(state))
+        if !has_key(seen, string(state)) && abs(state.lnum - a:task.target[0]) < limit - depth
           let seen[string(state)] = 1
           call add(next, state)
         endif

@@ -353,13 +353,19 @@ function! s:Walkable(task, limit) abort
       endif
     endfor
     return deleted <= a:limit
+  elseif abs(a:task.target[0] - a:task.position[0]) > a:limit
+    " Each line up or down takes a key.
+    return 0
   endif
   let s:session.running = 1
+  " The search's own keys fire no autocommands, the key count's included.
+  let eventignore = &eventignore
+  set eventignore=all
   try
     call cursor(a:task.position)
     let frontier = [winsaveview()]
     let seen = {}
-    for _ in range(a:limit + 1)
+    for depth in range(a:limit + 1)
       if !empty(filter(copy(frontier), {_, view -> [view.lnum, view.col + 1] == a:task.target}))
         return 1
       endif
@@ -369,7 +375,8 @@ function! s:Walkable(task, limit) abort
           call winrestview(view)
           execute 'normal!' key
           let state = filter(winsaveview(), {name, _ -> index(['lnum', 'col', 'curswant'], name) >= 0})
-          if !has_key(seen, string(state))
+          " A line too far from the target for the keys left is a dead end.
+          if !has_key(seen, string(state)) && abs(state.lnum - a:task.target[0]) < a:limit - depth
             let seen[string(state)] = 1
             call add(next, state)
           endif
@@ -379,6 +386,7 @@ function! s:Walkable(task, limit) abort
     endfor
     return 0
   finally
+    let &eventignore = eventignore
     let s:session.running = 0
   endtry
 endfunction
@@ -485,7 +493,7 @@ function! s:Isolated(Plays) abort
   set clipboard= nowrapscan
   try
     let result = a:Plays()
-    if histnr(':') != snapshot.history[':'][0]
+    if has_key(snapshot.history, ':') && histnr(':') != snapshot.history[':'][0]
       " @: cannot be set, so leave it repeating something harmless.
       let s:session.running = 1
       call feedkeys(":echo\<CR>", 'ntx')
@@ -500,7 +508,9 @@ endfunction
 
 function! s:Snapshot() abort
   let history = {}
-  for type in ['/', ':']
+  " Only these keys can add to the history, and copying a long one is slow.
+  let touches = join(get(s:session.task, 'tokens', [':']), '') =~# '[/?:*#@]'
+  for type in touches ? ['/', ':'] : []
     let entries = map(range(1, &history), {_, back -> histget(type, -back)})
     let history[type] = [histnr(type), reverse(filter(entries, '!empty(v:val)'))]
   endfor
