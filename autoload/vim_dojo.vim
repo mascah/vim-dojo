@@ -270,9 +270,9 @@ function! s:Generated(lesson, goals) abort
         \ 'index(["h", "j", "k", "l", "x"], v:val) >= 0'))
   let first = empty(snippets) ? 0 : rand() % len(snippets)
   for snippet in slice(snippets, first) + slice(snippets, 0, first)
-    let [tasks, seen, from, misses] = [[], {}, [], 0]
+    let [tasks, seen, tried, from, misses] = [[], {}, {}, [], 0]
     while len(tasks) < len(a:goals) && misses < 160
-      let task = vim_dojo#drills#Draw(a:lesson, snippet, from)
+      let task = vim_dojo#drills#Draw(a:lesson, snippet, from, tried)
       if s:Keep(task, seen, walks)
         call add(tasks, task)
         let [from, misses] = [task.moves ? task.target : [], 0]

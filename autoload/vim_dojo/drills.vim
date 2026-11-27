@@ -151,10 +151,16 @@ endfunction
 " on any non-blank character when that is empty, and its `at` place, on the
 " `side` of the cursor if one is given, only fills in the keys: {0} is the
 " place's text and {1} to {9} its submatches. Returns {} when no place fits.
-function! vim_dojo#drills#Draw(lesson, snippet, from) abort
+" An edit never draws a generator's place listed in `tried`, and adds the one
+" it draws, so a round runs out of places rather than drawing them again.
+function! vim_dojo#drills#Draw(lesson, snippet, from, tried) abort
   let generator = s:Pick(a:lesson.generators)
   let moves = get(a:lesson, 'moves', v:false)
   let places = has_key(generator, 'at') ? matchstrlist(a:snippet.lines, generator.at, {'submatches': v:true}) : []
+  let Key = {place -> generator.keys . ' ' . place.idx . ':' . place.byteidx}
+  if !moves
+    call filter(places, {_, place -> !has_key(a:tried, Key(place))})
+  endif
   if moves
     let from = !empty(a:from) ? a:from : s:Start(s:Pick(matchstrlist(a:snippet.lines, '\S')), 'first')
     let side = get(generator, 'side', '')
@@ -164,6 +170,9 @@ function! vim_dojo#drills#Draw(lesson, snippet, from) abort
   let place = s:Pick(places)
   if has_key(generator, 'at') && empty(place)
     return {}
+  endif
+  if !moves
+    let a:tried[Key(place)] = 1
   endif
   let pick = s:Variant(get(generator, 'vars', {}))
   if !empty(place)
