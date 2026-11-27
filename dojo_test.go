@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func catalog(t *testing.T) *Catalog {
@@ -54,11 +55,12 @@ func press(name string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: []rune(name)[0], Text: name}
 }
 
-func plain(s string) string { return regexp.MustCompile(`\x1b\[[0-9;:]*m`).ReplaceAllString(s, "") }
+// shown is what the shell shows, without colour.
+func shown(m *model) string { return ansi.Strip(m.View().Content) }
 
-// outline and shell-map: the eleven sections and their lessons in order,
-// each ending in a review, every lesson new on a fresh state, and the cursor
-// on today's session.
+// outline and shell-map: the eleven sections in order, each listing its
+// lessons and ending in a review, every lesson new on a fresh state, and the
+// cursor on today's session.
 func TestMap(t *testing.T) {
 	c := catalog(t)
 	var names []string
@@ -70,34 +72,47 @@ func TestMap(t *testing.T) {
 	if strings.Join(names, ",") != want {
 		t.Fatalf("sections %v", names)
 	}
-	m := &model{catalog: c, state: t.TempDir()}
-	m.refresh()
-	var got, expected []string
-	for _, r := range m.rows {
-		if r.kind == "lesson" || r.kind == "review" {
-			got = append(got, r.kind+" "+r.id)
-		}
-		if strings.Contains(r.text, "◐") || strings.Contains(r.text, "●") {
-			t.Errorf("not new on a fresh state: %q", r.text)
-		}
-		if len([]rune(r.text)) > 80 {
-			t.Errorf("wider than 80: %q", r.text)
+	m := newModel(c, t.TempDir())
+	view := shown(m)
+	lines := strings.Split(view, "\n")
+	if len(lines) != 24 {
+		t.Errorf("%d lines at the default size", len(lines))
+	}
+	for _, line := range lines {
+		if ansi.StringWidth(line) > 80 {
+			t.Errorf("wider than 80: %q", line)
 		}
 	}
-	for _, s := range c.Sections {
-		for _, id := range s.Lessons {
-			expected = append(expected, "lesson "+id)
-		}
-		expected = append(expected, "review "+s.ID)
+	if strings.ContainsAny(view, "◐●") {
+		t.Errorf("not new on a fresh state:\n%s", view)
 	}
-	if strings.Join(got, "\n") != strings.Join(expected, "\n") {
-		t.Fatalf("rows\n%v\nwant\n%v", got, expected)
-	}
-	view := plain(m.View().Content)
-	for _, text := range []string{"0 due today · 0 in inbox", "New here?", "› ▶ Start today's session",
-		"learn modes and Esc", "○ modes and Esc       new", "▷ Review Foundations", "Enter open · s stats · q quit"} {
+	for _, text := range []string{"› ▶ Start today's session", "▶ learn  modes and Esc", "New here?",
+		"j/k move", "l lessons", "enter open", "q quit"} {
 		if !strings.Contains(view, text) {
-			t.Errorf("map lacks %q:\n%s", text, view)
+			t.Errorf("dashboard lacks %q:\n%s", text, view)
+		}
+	}
+	m.Update(press("j"))
+	for _, s := range c.Sections {
+		m.Update(press("j"))
+		// The detail pane is right of the practice pane, which is 33 wide at 80.
+		var detail strings.Builder
+		for _, line := range strings.Split(shown(m), "\n") {
+			if runes := []rune(line); len(runes) > 33 {
+				detail.WriteString(string(runes[33:]) + "\n")
+			}
+		}
+		pane, at := detail.String(), 0
+		for _, id := range s.Lessons {
+			row := "○ " + truncate(c.ByID[id].Title, 19)
+			i := strings.Index(pane[at:], row)
+			if i < 0 {
+				t.Fatalf("%s: no %q in order:\n%s", s.Name, row, pane)
+			}
+			at += i + len(row)
+		}
+		if !strings.Contains(pane[at:], "▷ Review "+s.Name) {
+			t.Fatalf("%s: no review after its lessons:\n%s", s.Name, pane)
 		}
 	}
 }
@@ -157,11 +172,11 @@ func TestPlan(t *testing.T) {
 	if strings.Join(got, ",") != "review global,review dot,review jumplist,learn modes" {
 		t.Fatalf("plan %v", got)
 	}
-	m := &model{catalog: c, state: dir}
-	m.refresh()
-	if view := plain(m.View().Content); !strings.Contains(view, "3 due today") ||
-		!strings.Contains(view, "review :g / . / Ctrl-O Ctrl-I  ·  learn modes") {
-		t.Fatalf("session row:\n%s", view)
+	view := shown(newModel(c, dir))
+	for _, text := range []string{"▶ review :g", "· review .", "· review Ctrl-O Ctrl-I", "· learn  modes and Esc"} {
+		if !strings.Contains(view, text) {
+			t.Errorf("session pane lacks %q:\n%s", text, view)
+		}
 	}
 }
 
@@ -252,32 +267,35 @@ func TestCustom(t *testing.T) {
 	if goals[7].Drill != "custom-quoted-item" {
 		t.Fatalf("an untried custom drill does not come first: %+v", goals[7:])
 	}
-	m := &model{catalog: c, state: t.TempDir()}
-	m.refresh()
-	if view := plain(m.View().Content); !strings.Contains(view, "Custom") || !strings.Contains(view, "○ old-gone") {
+	m := newModel(c, t.TempDir())
+	if view := shown(m); !strings.Contains(view, "Custom") {
 		t.Fatalf("no Custom section:\n%s", view)
+	}
+	m.Update(press("G"))
+	m.Update(press("l"))
+	if view := shown(m); !strings.Contains(view, "○ old-gone") {
+		t.Fatalf("Custom does not list old-gone:\n%s", view)
 	}
 }
 
-// shell-page and page-first: Enter on a lesson shows its page, which
-// scrolls; Enter there writes the round's request and starts Vim.
+// shell-page and page-first: Enter on a section, then on a lesson, shows its
+// page, which scrolls; Enter there writes the round's request and starts Vim.
 func TestPage(t *testing.T) {
 	c := catalog(t)
-	m := &model{catalog: c, state: t.TempDir()}
-	m.refresh()
+	m := newModel(c, t.TempDir())
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
-	m.Update(press("j"))
-	m.Update(press("j"))
-	m.Update(press("enter"))
-	if m.view != pageView || m.pending.Lesson.ID != "modes" || m.pending.Kind != "learn" {
-		t.Fatalf("Enter on the first lesson: view %d %+v", m.view, m.pending)
+	for _, k := range []string{"j", "j", "enter", "enter"} {
+		m.Update(press(k))
 	}
-	top := plain(m.View().Content)
+	if m.screen != pageScreen || m.pending.Lesson.ID != "modes" || m.pending.Kind != "learn" {
+		t.Fatalf("Enter on the first lesson: screen %d %+v", m.screen, m.pending)
+	}
+	top := shown(m)
 	if !strings.Contains(top, "Modes and Esc") || strings.Contains(top, "```") {
 		t.Fatalf("page:\n%s", top)
 	}
 	m.Update(press("j"))
-	if m.scroll != 1 || plain(m.View().Content) == top {
+	if m.scroll != 1 || shown(m) == top {
 		t.Fatal("the page does not scroll")
 	}
 	m.Update(press("G"))
@@ -285,7 +303,7 @@ func TestPage(t *testing.T) {
 		t.Fatal("the end of the page is out of reach")
 	}
 	_, cmd := m.Update(press("enter"))
-	if cmd == nil || m.view != mapView {
+	if cmd == nil || m.screen != homeScreen {
 		t.Fatal("Enter on the page did not start the round")
 	}
 	var r Request
@@ -294,21 +312,21 @@ func TestPage(t *testing.T) {
 		t.Fatalf("request %s %v", data, err)
 	}
 	// A session's learn round on a new lesson opens on its page too.
+	m.Update(press("esc"))
 	m.Update(press("g"))
 	m.Update(press("enter"))
-	if m.view != pageView || !m.fromSession {
+	if m.screen != pageScreen || !m.fromSession {
 		t.Fatal("the session's new lesson skipped its page")
 	}
 }
 
 // shell-round: after Vim exits, the shell says how the round went from the
-// records it left, and the map shows the lesson's new state. A round left
+// records it left, and the dashboard shows the lesson's new state. A round left
 // early says so and drops the rest of the session.
 func TestFinish(t *testing.T) {
 	c := catalog(t)
 	dir := t.TempDir()
-	m := &model{catalog: c, state: dir}
-	m.refresh()
+	m := newModel(c, dir)
 	m.session = Plan(c, m.items, m.today())
 	m.sessionSize = 2
 	m.session = append(m.session, m.session[0])
@@ -318,12 +336,17 @@ func TestFinish(t *testing.T) {
 	write(t, dir, map[string]any{"id": "a", "technique": "modes", "result": "clean", "time": now},
 		round("modes", "learn", 8, 1, now))
 	m.Update(roundDone{planned: p, request: Request{Goals: make([]Goal, 10)}, before: map[string]bool{}})
-	view := plain(m.View().Content)
+	view := shown(m)
 	for _, text := range []string{"Learn  modes and Esc  ·  8 of 10 clean  ·  1:00  ·  passed",
-		"› ▶ Next round, 2 of 2", "◐ modes and Esc       shaky     due tomorrow"} {
+		"› ▶ Next round, 2 of 2"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("lacks %q:\n%s", text, view)
 		}
+	}
+	m.Update(press("j"))
+	m.Update(press("j"))
+	if view := shown(m); !regexp.MustCompile(`◐ modes and Esc +shaky.*due tomorrow`).MatchString(view) {
+		t.Errorf("Foundations does not show modes shaky:\n%s", view)
 	}
 	before := map[string]bool{}
 	for _, r := range Records(dir) {
@@ -332,13 +355,13 @@ func TestFinish(t *testing.T) {
 	write(t, dir, map[string]any{"id": "b", "technique": "modes", "result": "clean", "time": now + 1},
 		map[string]any{"id": "c", "technique": "modes", "result": "started", "time": now + 1})
 	m.Update(roundDone{planned: m.session[0], request: Request{Goals: make([]Goal, 10)}, before: before})
-	if view := plain(m.View().Content); !strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean") ||
+	if view := shown(m); !strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean") ||
 		!strings.Contains(view, "Start today's session") || len(m.session) != 0 {
 		t.Fatalf("left early:\n%s", view)
 	}
 	// shell-stats: the lesson's recent round, clean of goals and seconds per goal.
 	m.Update(press("s"))
-	if view := plain(m.View().Content); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
+	if view := shown(m); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
 		t.Fatalf("stats:\n%s", view)
 	}
 }
@@ -396,14 +419,13 @@ func TestMixedShell(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().Unix()
 	write(t, dir, round("modes", "learn", 9, true, now), round("hjkl", "learn", 9, true, now))
-	m := &model{catalog: c, state: dir}
-	m.refresh()
+	m := newModel(c, dir)
 	m.Update(press("j"))
-	if m.rows[m.cursor].kind != "mixed" {
-		t.Fatalf("no mixed row after the session: %+v", m.rows[m.cursor])
+	if m.left != 1 {
+		t.Fatalf("no mixed row after the session: row %d", m.left)
 	}
 	m.Update(press("enter"))
-	if view := plain(m.View().Content); m.view != mixedView || !strings.Contains(view, "every learned lesson (2)") ||
+	if view := shown(m); !m.dialog || !strings.Contains(view, "every learned lesson (2)") ||
 		!strings.Contains(view, "‹ 20 goals ›") {
 		t.Fatalf("mixed view:\n%s", view)
 	}
@@ -412,7 +434,7 @@ func TestMixedShell(t *testing.T) {
 	m.Update(press("l"))
 	m.Update(press("j"))
 	m.Update(press("space"))
-	if view := plain(m.View().Content); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
+	if view := shown(m); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
 		!strings.Contains(view, "Entering Insert (4 lessons)") {
 		t.Fatalf("after choosing:\n%s", view)
 	}
@@ -434,12 +456,59 @@ func TestMixedShell(t *testing.T) {
 	write(t, dir, map[string]any{"id": "mixed", "result": "round", "kind": "mixed", "clean": 11, "goals": 14,
 		"passed": 0, "seconds": 300, "time": now + 1})
 	m.Update(roundDone{planned: Planned{Kind: "mixed", Limit: 300}, request: r, before: before})
-	view := plain(m.View().Content)
+	view := shown(m)
 	if !strings.Contains(view, "Mixed practice  ·  11 of 14 clean  ·  5:00") || strings.Contains(view, "passed") {
 		t.Fatalf("mixed summary:\n%s", view)
 	}
 	m.Update(press("s"))
-	if view := plain(m.View().Content); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
+	if view := shown(m); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
 		t.Fatalf("stats:\n%s", view)
+	}
+}
+
+// Every screen, at every size from tiny to huge, fresh and practised, draws
+// without a panic, no wider than the window and no taller.
+func TestSizes(t *testing.T) {
+	c := catalog(t)
+	fresh, practised := t.TempDir(), t.TempDir()
+	now := time.Now().Unix()
+	for i, l := range c.Lessons[:12] {
+		at := now - int64(i)*86400
+		write(t, practised, map[string]any{"id": "g-" + l.ID, "technique": l.ID, "result": "clean", "time": at},
+			round(l.ID, "learn", 8+i%3, i%4 != 3, at))
+	}
+	write(t, practised, map[string]any{"id": "mixed", "result": "round", "kind": "mixed", "clean": 15, "goals": 20,
+		"passed": 0, "seconds": 200, "time": now})
+	os.MkdirAll(filepath.Join(practised, "inbox"), 0o700)
+	os.WriteFile(filepath.Join(practised, "inbox", "note.json"), []byte("{}"), 0o600)
+	screens := map[string]string{"home": "", "detail": "j j j j j l j", "session": "enter", "page": "j j l enter",
+		"stats": "s", "dialog": "m j space l l l", "help": "?"}
+	for name, keys := range screens {
+		for _, dir := range []string{fresh, practised} {
+			for w := 20; w <= 150; w += 7 {
+				for h := 5; h <= 50; h += 3 {
+					m := newModel(c, dir)
+					m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+					if dir == practised {
+						// The line a round leaves above the footer.
+						m.Update(roundDone{planned: Planned{Kind: "learn", Lesson: c.Lessons[0]},
+							request: Request{Goals: make([]Goal, 10)}, before: map[string]bool{}})
+					}
+					for _, k := range strings.Fields(keys) {
+						m.Update(press(k))
+					}
+					lines := strings.Split(m.View().Content, "\n")
+					if len(lines) > h {
+						t.Errorf("%s %s %dx%d: %d lines", name, dir, w, h, len(lines))
+					}
+					for _, line := range lines {
+						if ansi.StringWidth(line) > w {
+							t.Errorf("%s %s %dx%d: a line %d wide", name, dir, w, h, ansi.StringWidth(line))
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 }
