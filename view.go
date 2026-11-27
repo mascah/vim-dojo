@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 )
 
@@ -15,7 +17,27 @@ const (
 	twoPanes  = 80  // narrower ones show one pane at a time
 	tileRows  = 4
 	stripRows = 10
+	sideWidth = 36 // the lesson page's side column, from pageSide columns up
+	pageSide  = 110
 )
+
+// layout sizes the page's viewport and renders the lesson into it.
+func (m *model) layout() {
+	if m.width == 0 {
+		return
+	}
+	w := min(m.width, maxWidth)
+	if m.screen == pageScreen {
+		text := min(w-5, 84)
+		if w >= pageSide {
+			text = min(w-sideWidth-7, 84)
+		}
+		at := m.page.YOffset()
+		m.page = viewport.New(viewport.WithWidth(text), viewport.WithHeight(max(1, m.height-4)))
+		m.page.SetContent(m.th.render(m.pending.Lesson.Page, text))
+		m.page.SetYOffset(at)
+	}
+}
 
 // fill puts the footer on the last line and centres the shell in a wide terminal.
 func (m *model) fill(body, footer string) string {
@@ -584,4 +606,80 @@ func (m *model) boxes(width int) string {
 			t.bar(width-10, float64(c)/float64(peak), colour)+t.fg(t.text).Render(fmt.Sprintf(" %2d", c)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (t theme) pill(text string, c color.Color) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(t.onAccent).Background(c).Padding(0, 1).Render(text)
+}
+
+// pageView is a lesson's page: Glamour's rendering in a viewport, a scroll
+// bar, and beside it on a wide terminal the lesson's keys and its record.
+func (m *model) pageView() string {
+	t := m.th
+	w := min(m.width, maxWidth)
+	l := m.pending.Lesson
+	kind, note := "LEARN", "10 goals · keys shown"
+	if m.pending.Kind == "review" {
+		kind, note = "REVIEW", "10 goals · keys hidden"
+	}
+	header := m.header(w, t.pill(kind, t.accent)+" "+t.fg(t.muted).Render(note)+" ", m.catalog.SectionName(l.Section), l.Title)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, "  ", m.page.View(), " ", m.scrollbar(m.page))
+	if w >= pageSide {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, body, "  ", m.side(l, sideWidth))
+	}
+	percent := t.fg(t.muted).Render(fmt.Sprintf("%3.0f%%", m.page.ScrollPercent()*100))
+	footer := m.footer(w, bindings{named(keys.Open, "enter", "start the round"), named(keys.Down, "j/k", "scroll"),
+		key.NewBinding(key.WithKeys("space"), key.WithHelp("space/b", "page")), named(keys.Top, "g/G", "ends"),
+		named(keys.Quit, "q", "back")}, percent)
+	return m.fill(header+"\n\n"+body, footer)
+}
+
+func (m *model) scrollbar(v viewport.Model) string {
+	t := m.th
+	height, total := v.Height(), v.TotalLineCount()
+	if total <= height {
+		return strings.Repeat(" \n", height-1) + " "
+	}
+	thumb := max(1, height*height/total)
+	top := int(float64(height-thumb)*v.ScrollPercent() + 0.5)
+	lines := make([]string, height)
+	for i := range lines {
+		lines[i] = t.fg(t.line).Render("│")
+		if i >= top && i < top+thumb {
+			lines[i] = t.fg(t.accent).Render("┃")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// side is the column beside a lesson's page.
+func (m *model) side(l *Lesson, w int) string {
+	t := m.th
+	inner := w - 4
+	wide := 0
+	for _, k := range l.Keys {
+		wide = min(max(wide, lipgloss.Width(k[0])), 12)
+	}
+	var rows []string
+	for _, k := range l.Keys {
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, t.fg(t.key).Bold(true).Render(pad(truncate(k[0], wide), wide+2)),
+			t.fg(t.muted).Width(inner-wide-2).Render(k[1])))
+	}
+	keysCard := t.card("Keys", "", strings.Join(rows, "\n"), w, lipgloss.Height(strings.Join(rows, "\n"))+2, false)
+
+	item := m.items[l.ID]
+	level := item.Level()
+	lines := []string{t.fg(t.levels[level]).Render(symbols[level]+" "+words[level]) + "  " + t.pips(item.Box)}
+	if when := due(item, m.today()); when != "" {
+		lines = append(lines, t.fg(t.muted).Render(when))
+	}
+	if len(item.Recent) > 0 {
+		lines = append(lines, "", t.fg(t.muted).Render("Recent rounds"))
+	}
+	for _, r := range item.Recent[max(0, len(item.Recent)-5):] {
+		lines = append(lines, t.fg(m.passColour(r)).Render(fmt.Sprintf("%2d of %d", r.Clean, r.Goals))+
+			t.fg(t.muted).Render(fmt.Sprintf("  %4.1fs a goal  %s", float64(r.Seconds)/float64(max(1, r.Goals)), r.Kind)))
+	}
+	record := t.card("Your record", "", strings.Join(lines, "\n"), w, len(lines)+2, false)
+	return keysCard + "\n" + record
 }

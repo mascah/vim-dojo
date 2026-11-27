@@ -6,6 +6,9 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/progress"
+	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -182,4 +185,41 @@ func (t theme) help() help.Styles {
 	key, desc, sep := t.fg(t.key), t.fg(t.muted), t.fg(t.faint)
 	return help.Styles{ShortKey: key, ShortDesc: desc, ShortSeparator: sep, Ellipsis: sep,
 		FullKey: key, FullDesc: desc, FullSeparator: sep}
+}
+
+// markdown is the Glamour style for lesson pages: Glamour's own dark or light
+// style with the shell's colours over it.
+func (t theme) markdown() ansi.StyleConfig {
+	s := styles.LightStyleConfig
+	if t.dark {
+		s = styles.DarkStyleConfig
+	}
+	str := func(v string) *string { return &v }
+	yes, no, zero := true, false, uint(0)
+	s.Document.Margin = &zero
+	s.Document.BlockPrefix, s.Document.BlockSuffix = "", ""
+	s.Document.Color = str(t.hex["text"])
+	s.H1.StylePrimitive = ansi.StylePrimitive{Prefix: " ", Suffix: " ", Bold: &yes,
+		Color: str(t.hex["on"]), BackgroundColor: str(t.hex["accent"])}
+	s.H2.StylePrimitive = ansi.StylePrimitive{Prefix: "▌ ", Bold: &yes, Color: str(t.hex["accent"])}
+	s.Code.StylePrimitive = ansi.StylePrimitive{Prefix: " ", Suffix: " ", Color: str(t.hex["key"]),
+		BackgroundColor: str(t.hex["surface"])}
+	s.CodeBlock.StylePrimitive.Color = str(t.hex["key"])
+	s.Table.StylePrimitive.Color = str(t.hex["text"])
+	s.Table.CenterSeparator, s.Table.ColumnSeparator, s.Table.RowSeparator = str("┼"), str("│"), str("─")
+	s.Strong.Bold, s.Emph.Italic = &yes, &yes
+	s.Link.Underline = &no
+	return s
+}
+
+func (t theme) render(page []string, width int) string {
+	r, err := glamour.NewTermRenderer(glamour.WithStyles(t.markdown()), glamour.WithWordWrap(width))
+	if err != nil {
+		return strings.Join(page, "\n")
+	}
+	out, err := r.Render(strings.Join(page, "\n"))
+	if err != nil {
+		return strings.Join(page, "\n")
+	}
+	return strings.Trim(out, "\n")
 }

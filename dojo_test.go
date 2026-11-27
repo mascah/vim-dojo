@@ -323,15 +323,15 @@ func TestPage(t *testing.T) {
 		t.Fatalf("Enter on the first lesson: screen %d %+v", m.screen, m.pending)
 	}
 	top := shown(m)
-	if !strings.Contains(top, "Modes and Esc") || strings.Contains(top, "```") {
+	if !strings.Contains(top, "Modes and Esc") || strings.Contains(ansi.Strip(m.page.GetContent()), "`") {
 		t.Fatalf("page:\n%s", top)
 	}
 	m.Update(press("j"))
-	if m.scroll != 1 || shown(m) == top {
+	if m.page.YOffset() != 1 || shown(m) == top {
 		t.Fatal("the page does not scroll")
 	}
 	m.Update(press("G"))
-	if lines := m.pageLines(); !strings.Contains(m.View().Content, lines[len(lines)-1]) || m.scroll == 0 {
+	if !m.page.AtBottom() {
 		t.Fatal("the end of the page is out of reach")
 	}
 	_, cmd := m.Update(press("enter"))

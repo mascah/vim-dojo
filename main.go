@@ -15,6 +15,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -25,7 +26,6 @@ var (
 	selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 	levels   = []lipgloss.Style{faint, lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("2"))}
-	code = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 )
 
 func main() {
@@ -108,10 +108,11 @@ type model struct {
 	help          help.Model
 	width, height int
 	screen        screen
-	left, right   int     // the row in the practice pane and in the detail pane
-	inDetail      bool    // the detail pane has the focus
-	dialog        bool    // mixed practice's setup is open
-	scroll        int     // the page's or stats' first line
+	left, right   int  // the row in the practice pane and in the detail pane
+	inDetail      bool // the detail pane has the focus
+	dialog        bool // mixed practice's setup is open
+	scroll        int  // stats' first line
+	page          viewport.Model
 	pending       Planned // the round a page starts
 	fromSession   bool
 	session       []Planned // the rest of today's session once it has started
@@ -187,9 +188,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.layout()
 	case tea.BackgroundColorMsg:
 		m.th = newTheme(msg.IsDark())
 		m.help.Styles = m.th.help()
+		m.layout()
 	case roundDone:
 		m.finish(msg)
 	case tea.KeyPressMsg:
@@ -200,11 +203,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.dialog:
 			return m, m.dialogKey(msg)
 		case m.screen == pageScreen:
-			if key.Matches(msg, keys.Open) {
-				m.screen = homeScreen
-				return m, m.start(m.pending, m.fromSession)
-			}
-			m.scrollKey(msg.String(), len(m.pageLines()))
+			return m, m.pageKey(msg)
 		case m.screen == statsScreen:
 			m.scrollKey(msg.String(), len(m.statsLines()))
 		default:
@@ -277,6 +276,23 @@ func (m *model) open(enter bool) tea.Cmd {
 			kind = "learn"
 		}
 		return m.before(Planned{Kind: kind, Lesson: l}, false)
+	}
+	return nil
+}
+
+func (m *model) pageKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Open):
+		m.screen = homeScreen
+		return m.start(m.pending, m.fromSession)
+	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back):
+		m.screen = homeScreen
+	case key.Matches(msg, keys.Top):
+		m.page.GotoTop()
+	case key.Matches(msg, keys.Bottom):
+		m.page.GotoBottom()
+	default:
+		m.page, _ = m.page.Update(msg)
 	}
 	return nil
 }
@@ -369,7 +385,9 @@ func (m *model) before(p Planned, fromSession bool) tea.Cmd {
 	if len(p.Lesson.Page) == 0 || fromSession && m.items[p.Lesson.ID].Box > 0 {
 		return m.start(p, fromSession)
 	}
-	m.screen, m.scroll, m.pending, m.fromSession = pageScreen, 0, p, fromSession
+	m.screen, m.pending, m.fromSession = pageScreen, p, fromSession
+	m.layout()
+	m.page.GotoTop()
 	return nil
 }
 
@@ -472,11 +490,12 @@ func (m *model) View() tea.View {
 	// draw without ever sending one.
 	if m.width == 0 {
 		m.width, m.height = 80, 24
+		m.layout()
 	}
 	var content string
 	switch {
 	case m.screen == pageScreen:
-		content = m.window(m.pageLines(), faint.Render("Enter start the round · j k scroll · q back"))
+		content = m.pageView()
 	case m.screen == statsScreen:
 		content = m.window(m.statsLines(), faint.Render("j k scroll · q back"))
 	case m.dialog:
@@ -503,38 +522,6 @@ func (m *model) window(lines []string, footer string) string {
 func (m *model) bodyHeight(lines int, footer string) int {
 	if m.height > 1 {
 		return max(1, m.height-strings.Count(footer, "\n")-1)
-	}
-	return lines
-}
-
-var inline = regexp.MustCompile("`[^`]+`")
-
-// pageLines renders a lesson page: headings bold, code blocks indented and
-// coloured, inline code coloured, paragraphs wrapped to the window.
-func (m *model) pageLines() []string {
-	width := 80
-	if m.width > 0 {
-		width = min(width, m.width)
-	}
-	var lines []string
-	inCode := false
-	for _, line := range m.pending.Lesson.Page {
-		switch {
-		case strings.HasPrefix(line, "```"):
-			inCode = !inCode
-		case inCode:
-			lines = append(lines, code.Render("    "+line))
-		case strings.HasPrefix(line, "#"):
-			lines = append(lines, bold.Render(strings.TrimLeft(line, "# ")))
-		default:
-			wrapped := lipgloss.NewStyle().Width(width).Render(line)
-			for part := range strings.SplitSeq(wrapped, "\n") {
-				part = strings.TrimRight(part, " ")
-				lines = append(lines, inline.ReplaceAllStringFunc(part, func(s string) string {
-					return code.Render(strings.Trim(s, "`"))
-				}))
-			}
-		}
 	}
 	return lines
 }
