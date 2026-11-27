@@ -81,7 +81,7 @@ tmux send-keys -t "$session" ':qa!' Enter
 
 # shell-round, end to end: the shell starts Vim, here a wrapper with the
 # same vimrc, on a custom lesson of ten goals; solving them all returns to
-# the map with the summary and the lesson shaky.
+# the dashboard with the last round's line and the lesson shaky.
 if command -v go >/dev/null 2>&1 && (cd "$root" && go build -o "$tmp/dojo" .); then
   mkdir -p "$tmp/bin" "$tmp/drills"
   printf '#!/bin/sh\nexec %s -Nu %s -i NONE -n "$@"\n' "$(command -v vim)" "$tmp/vimrc" > "$tmp/bin/vim"
@@ -92,7 +92,8 @@ if command -v go >/dev/null 2>&1 && (cd "$root" && go build -o "$tmp/dojo" .); t
   tmux new-session -d -s "$session" -x 100 -y 30 \
     "PATH='$tmp/bin':\$PATH VIM_DOJO_ROOT='$root' VIM_DOJO_STATE_DIR='$tmp/shell' VIM_DOJO_DRILL_DIR='$tmp/drills' '$tmp/dojo'"
   check shell-map 'Start today'
-  tmux send-keys -t "$session" G Enter
+  # The Custom section, into it, and start: a custom lesson has no page.
+  tmux send-keys -t "$session" G Enter Enter
   check shell-round 'Learn  zz-beta  ·  1/10'
   for _ in $(seq 10); do
     tmux send-keys -t "$session" ciwbeta Escape
@@ -100,8 +101,8 @@ if command -v go >/dev/null 2>&1 && (cd "$root" && go build -o "$tmp/dojo" .); t
   done
   check shell-round '10 of 10 clean'
   tmux send-keys -t "$session" Enter
-  check shell-round 'Learn  zz-beta  ·  10 of 10 clean  ·  .*passed'
-  check shell-round '◐ zz-beta  *shaky  *due tomorrow'
+  check shell-round 'PASSED  *Learn  zz-beta  ·  10 of 10 clean'
+  check shell-round '◐ zz-beta  *shaky.*due tomorrow'
   # Quitting Vim mid-round returns too, and says so.
   tmux send-keys -t "$session" Enter
   check shell-round 'Review  zz-beta  ·  1/10'
