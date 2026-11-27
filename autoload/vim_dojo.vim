@@ -16,62 +16,68 @@ let s:pass = 8
 " not depend on the window's size.
 let s:scroll = 8
 
-" Resumes a session in progress; otherwise opens the skill map.
-function! vim_dojo#Dojo() abort
-  if has_key(s:session, 'rounds') && (s:WindowExists('edit') || s:WindowExists('panel'))
-    let had_edit = s:Open()
-    if !had_edit && s:session.page
-      call s:Page()
-    elseif !had_edit && !s:session.summary
-      call s:StopDemo()
-      call s:Reset()
-    else
-      call s:Render()
-    endif
+" Runs the round the shell wrote to `path`, in the state directory, and
+" quits Vim when it is done. The request names its goals by lesson, as
+" generated or as a drill id; `drills` is the custom drill directory, so
+" both sides read the same one. A drill that no longer loads is left out.
+function! vim_dojo#Run(path) abort
+  if !has('patch-9.1.0597')
+    " KeyInputPre arrived in 9.1.0563 and its typedchar, which the key count
+    " relies on, in 9.1.0597.
+    echohl ErrorMsg | echo 'Vim Dojo needs Vim 9.1.0597 or later.' | echohl None
     return
   endif
-  call vim_dojo#map#Open()
+  let round = json_decode(join(readfile(a:path), "\n"))
+  let g:vim_dojo_state_dir = fnamemodify(a:path, ':p:h')
+  let g:vim_dojo_drill_dir = round.drills
+  let s:run = 1
+  let drills = {}
+  for technique in vim_dojo#drills#Techniques()
+    for drill in technique.drills
+      let drills[technique.id . ' ' . drill.id] = drill
+    endfor
+  endfor
+  call map(round.goals, {_, goal -> get(goal, 'generated') ? {'generated': 1, 'lesson': goal.lesson}
+        \ : get(drills, goal.lesson . ' ' . goal.drill, {})})
+  call filter(round.goals, '!empty(v:val)')
+  if empty(round.goals)
+    echohl ErrorMsg | echo 'Vim Dojo: none of this round''s drills load; see :messages.' | echohl None
+    return
+  endif
+  call vim_dojo#Start(round)
+  " The empty tab Vim started with would be left behind on :q.
+  silent! tabonly
 endfunction
 
-" Runs rounds one after another. A round is {'kind', 'technique', 'goals'}:
-" kind is learn, review, section, or free, and goals is a list of drills.
-" A section round also names its `section` and the section's `name`.
-function! vim_dojo#Start(rounds) abort
+" Runs a round: {'kind', 'technique', 'goals'}, where kind is learn,
+" review, section, or free, and goals is a list of drills. `demo` asks for
+" the first goal to be demonstrated. A section round also names its
+" `section`, the section's `name`, and in `place` the lessons a pass places.
+function! vim_dojo#Start(round) abort
   call s:StopDemo()
   let techniques = {}
   for technique in vim_dojo#drills#Techniques()
     let techniques[technique.id] = technique
   endfor
   call s:Open()
-  call extend(s:session, {'rounds': a:rounds, 'r': -1, 'techniques': techniques,
-        \ 'warning': '', 'demo': {}, 'running': 0})
-  call s:OpenRound()
+  call extend(s:session, {'techniques': techniques, 'warning': '', 'demo': {}, 'running': 0})
+  call s:OpenRound(a:round)
 endfunction
 
-function! vim_dojo#Focus(id) abort
-  let matches = filter(vim_dojo#drills#Techniques(), {_, t -> t.id ==# a:id})
-  if empty(matches)
-    echohl ErrorMsg | echo 'Vim Dojo has no technique called ' . a:id | echohl None
-    return
+" Puts back a window the learner closed during a round.
+function! s:Resume() abort
+  let had_edit = s:Open()
+  if !had_edit && !s:session.summary
+    call s:StopDemo()
+    call s:Reset()
+  else
+    call s:Render()
   endif
-  call vim_dojo#Start([vim_dojo#progress#Focus(matches[0])])
-endfunction
-
-function! vim_dojo#Free() abort
-  let drills = []
-  for technique in vim_dojo#drills#Techniques()
-    call extend(drills, technique.drills)
-  endfor
-  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [drills[rand() % len(drills)]]}])
 endfunction
 
 " The drill being practised, as the test suite and any tooling can read it.
 function! vim_dojo#Task() abort
   return deepcopy(get(s:session, 'task', {}))
-endfunction
-
-function! vim_dojo#Complete(lead, ...) abort
-  return filter(map(vim_dojo#drills#Techniques(), {_, t -> t.id}), {_, id -> id =~# '^' . a:lead})
 endfunction
 
 function! vim_dojo#Note(first, last, note) abort
@@ -153,7 +159,7 @@ function! s:Capture() abort
 endfunction
 
 function! s:Listening() abort
-  return !empty(s:session) && has_key(s:session, 'log') && !s:session.summary && !s:session.page
+  return !empty(s:session) && has_key(s:session, 'log') && !s:session.summary
         \ && !s:session.running && empty(s:session.demo) && bufnr('%') == s:session.edit_buf
 endfunction
 
@@ -199,14 +205,9 @@ endfunction
 " playing a solution then would run them too.
 " A goal {'generated': 1} is drawn from the generators of its `lesson`, or
 " of the round's technique, and the rest are drills.
-" A learn round on a lesson that is still new opens on the lesson's page, and
-" the first goal of its first learn round is demonstrated before it is
-" handed over.
-function! s:OpenRound() abort
-  let s:session.r += 1
-  let round = s:session.rounds[s:session.r]
+function! s:OpenRound(round) abort
+  let round = a:round
   let technique = get(s:session.techniques, round.technique, {})
-  let item = empty(technique) ? {'box': 0, 'rounds': 0} : vim_dojo#progress#State([technique])[technique.id]
   let generated = {}
   for goal in filter(copy(round.goals), 'get(v:val, "generated")')
     let id = get(goal, 'lesson', round.technique)
@@ -225,27 +226,10 @@ function! s:OpenRound() abort
       call add(tasks, s:session.task)
     endif
   endfor
-  let learn = round.kind ==# 'learn' && !empty(technique)
   call extend(s:session, {'round': round, 'tasks': tasks, 'technique': technique, 'index': 0,
         \ 'results': [], 'summary': 0, 'last': '', 'round_started': localtime(),
-        \ 'demo_first': learn && !item.rounds, 'page': learn && !item.box && !empty(get(technique, 'page', []))})
-  if s:session.page
-    call s:Page()
-  else
-    call s:OpenTask()
-  endif
-endfunction
-
-" Shows the lesson's page, read-only, in the practice window until Enter.
-function! s:Page() abort
-  call win_gotoid(s:session.edit)
-  call s:Unmark()
-  setlocal modifiable
-  let &l:filetype = 'markdown'
-  call s:Fill(s:session.technique.page)
-  setlocal nomodifiable nomodified
-  call cursor(1, 1)
-  call s:Render()
+        \ 'demo_first': get(round, 'demo', 0)})
+  call s:OpenTask()
 endfunction
 
 function! s:OpenTask() abort
@@ -551,7 +535,7 @@ function! s:Auto() abort
     return
   endif
   let now = s:Now()
-  if now ==# s:session.seen || s:session.summary || s:session.page || !s:WindowExists('panel')
+  if now ==# s:session.seen || s:session.summary || !s:WindowExists('panel')
     return
   endif
   let edited = now[0] != s:session.seen[0]
@@ -648,23 +632,13 @@ function! vim_dojo#Action(action) abort
     return
   endif
   if !s:WindowExists('edit') || !s:WindowExists('panel')
-    call vim_dojo#Dojo()
+    call s:Resume()
     return
   endif
   call win_gotoid(s:session.edit)
   if s:session.summary
     if a:action ==# 'check' || a:action ==# 'next'
-      if s:session.r + 1 < len(s:session.rounds)
-        call s:OpenRound()
-      else
-        call s:Close()
-        call vim_dojo#map#Open()
-      endif
-    endif
-  elseif s:session.page
-    if a:action ==# 'check' || a:action ==# 'next'
-      let s:session.page = 0
-      call s:OpenTask()
+      call s:Close()
     endif
   elseif !empty(s:session.demo) && a:action !=# 'skip'
     " Any dojo key during a demo ends it and hands the goal over.
@@ -682,9 +656,15 @@ function! vim_dojo#Action(action) abort
   endif
 endfunction
 
+" A round the shell started ends by quitting Vim, which asks first about
+" any file the learner changed meanwhile.
 function! s:Close() abort
   call s:StopDemo()
   autocmd! vim_dojo_capture
+  if get(s:, 'run')
+    confirm qall
+    return
+  endif
   if s:WindowExists('edit')
     call win_gotoid(s:session.edit)
   endif
@@ -782,16 +762,15 @@ function! s:EndRound() abort
   if index(['learn', 'review'], round.kind) >= 0
     call s:Write(extend(record, {'id': round.technique, 'technique': round.technique}))
   endif
-  " A passed section review places the section's new lessons as known. Its
-  " own record names no technique, so it moves no box.
+  " A passed section review places the lessons its request names, the
+  " section's new ones, as known. Its own record names no technique, so it
+  " moves no box.
   let s:session.placed = []
   if round.kind ==# 'section'
     call s:Write(extend(record, {'id': round.section, 'section': round.section}))
-    let lessons = filter(values(s:session.techniques), {_, t -> t.skill ==# round.section})
-    let state = vim_dojo#progress#State(lessons)
-    let s:session.placed = !s:session.passed ? [] : filter(lessons, {_, t -> !state[t.id].box})
-    for lesson in s:session.placed
-      call s:Write({'id': lesson.id, 'technique': lesson.id, 'result': 'placed'})
+    let s:session.placed = s:session.passed ? get(round, 'place', []) : []
+    for id in s:session.placed
+      call s:Write({'id': id, 'technique': id, 'result': 'placed'})
     endfor
   endif
   let s:session.summary = 1
@@ -919,9 +898,6 @@ function! s:Title() abort
   let title = kind ==# 'learn' ? 'Learn  ' . technique.title
         \ : kind ==# 'review' ? 'Review  ' . technique.title
         \ : kind ==# 'section' ? 'Section review  ' . s:session.round.name : 'Free practice'
-  if len(s:session.rounds) > 1
-    let title .= printf('  ·  round %d of %d', s:session.r + 1, len(s:session.rounds))
-  endif
   return 'Vim Dojo  ·  ' . title
 endfunction
 
@@ -949,16 +925,12 @@ function! s:Summary() abort
   if !empty(advice)
     call extend(lines, [''] + advice[0])
   endif
-  let next = s:session.r + 1 < len(s:session.rounds) ? 'Next round' : 'Skill map     :DojoClose  Return to your work'
-  return lines + ['', 'Enter / :DojoNext  ' . next]
+  return lines + ['', 'Enter / :DojoNext  Back to the map']
 endfunction
 
 function! s:Render() abort
   if s:session.summary
     let lines = s:Summary()
-  elseif s:session.page
-    let lines = [s:Title() . '  ·  page', '', 'Read the lesson''s page, then press Enter to start the round.',
-          \ '', 'Enter / :DojoNext  Start   :DojoClose']
   else
     let task = s:session.task
     let technique = s:session.technique
@@ -995,11 +967,11 @@ function! s:Render() abort
   call setbufvar(buf, '&modifiable', 0)
   let height = min([len(lines) + 1, max([3, &lines / 2])])
   call win_execute(s:session.panel, 'resize ' . height . ' | normal! gg0')
-  " Enter is mapped only on a page and a round's summary. Otherwise it is not ours, so
+  " Enter is mapped only on a round's summary. Otherwise it is not ours, so
   " it stays whatever the learner has it set to.
   " ponytail: a learner <buffer> <CR> map is lost once we map over it at a
   " summary; save and mapset() it back if that ever matters.
-  let ours = s:session.summary || s:session.page
+  let ours = s:session.summary
   for win in [s:session.edit, s:session.panel]
     " A list, not '|': :nunmap would swallow '| endif' as part of the lhs.
     call win_execute(win, ours ? 'nnoremap <buffer> <silent> <CR> <Cmd>DojoNext<CR>'

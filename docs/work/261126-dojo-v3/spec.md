@@ -508,5 +508,33 @@ only; the v2 map keeps working until slice 5 replaces it.
    one-front-end, nothing-raw-persisted). Go module at the repository root.
    Ports `progress#State` and the session plan to Go, which then owns them;
    the runner takes a round request and writes goal records. Deletes
-   `map.vim` and the planning half of `progress.vim`.
+   `map.vim` and the planning half of `progress.vim`. Done 2026-11-26:
+   - `dojo.go` holds the catalog, records, `State`, `Plan`, and `Draw`;
+     `main.go` the Bubble Tea map, page, and stats views. Built with
+     `go build -o dojo .`; the binary finds the lessons beside itself through
+     a symlink, or at `VIM_DOJO_ROOT`. `snippets/go.mod` keeps the practice
+     Go files out of the module.
+   - The shell writes `round.json` in the state directory and runs
+     `vim -c 'set rtp^=<root>' -c 'call vim_dojo#Run(<path>)'`. The request
+     names goals by lesson, as `generated` or a `drill` id, with `demo`,
+     `place` (the lessons a passed section review places), and `drills`,
+     the custom drill directory, so both sides read the same one. The state
+     directory is the request's directory. Enter at the summary, or
+     `:DojoClose`, runs `confirm qall`.
+   - When Vim exits, the shell reads the records that appeared since it
+     started: a round record gives the summary line, otherwise it says the
+     round was left after so many goals. The detailed not-clean list stays
+     in Vim's panel, since records never hold solutions. The summary stays
+     pinned above the map's legend; the cursor keeps its row.
+   - Each round of a session is its own Vim. A round left early ends the
+     session. A session's learn round on a new lesson opens on its page in
+     the shell; the runner no longer shows pages, and takes one round.
+   - `VIM_DOJO_STATE_DIR` and `VIM_DOJO_DRILL_DIR` replace the `g:` settings
+     for learners; Vim still honours the `g:` ones, which the suite uses.
+   - The shell checks a custom drill's id, goal, lines, and lesson only;
+     a file Vim then rejects drops out of its round.
+   - `dojo.vim` is gone with `:Dojo`. The suite builds rounds itself;
+     scheduling, the plan, section draws, the map, pages, and stats are
+     tested in `dojo_test.go`; `test/typing.sh` plays a round from the
+     shell through tmux, finishing one and quitting another.
 6. **Mixed practice** (mixed-round, timed).

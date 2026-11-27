@@ -9,11 +9,6 @@ let s:lessons = []
 let s:renamed = {'counts': 'count-lines', 'join': 'line-ops', 'paren': 'bracket', 'brace': 'bracket',
       \ 'insert-at': 'insert-line', 'put': 'yank-put'}
 
-" Sections in teaching order, as [id, name], from lessons/outline.json.
-function! vim_dojo#drills#Skills() abort
-  return map(s:Outline(), {_, section -> [section.id, section.name]}) + [['custom', 'Custom']]
-endfunction
-
 function! s:Outline() abort
   return json_decode(join(readfile(s:root . '/lessons/outline.json'), "\n"))
 endfunction
@@ -125,7 +120,8 @@ endfunction
 function! vim_dojo#drills#Snippets() abort
   if empty(s:snippets)
     let dir = s:root . '/snippets'
-    let s:snippets = map(readdir(dir), {_, name -> {'name': name,
+    let names = readdir(dir, {name -> has_key(s:filetypes, fnamemodify(name, ':e'))})
+    let s:snippets = map(names, {_, name -> {'name': name,
           \ 'ft': s:filetypes[fnamemodify(name, ':e')], 'lines': readfile(dir . '/' . name)}})
   endif
   return deepcopy(s:snippets)
@@ -263,7 +259,7 @@ function! s:Code(name) abort
 endfunction
 
 function! s:Custom(techniques) abort
-  let dir = expand(get(g:, 'vim_dojo_drill_dir', '~/.vim/vim-dojo/drills'))
+  let dir = expand(get(g:, 'vim_dojo_drill_dir', empty($VIM_DOJO_DRILL_DIR) ? '~/.vim/vim-dojo/drills' : $VIM_DOJO_DRILL_DIR))
   if !isdirectory(dir)
     return []
   endif

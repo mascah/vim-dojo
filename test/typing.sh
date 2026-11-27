@@ -18,9 +18,9 @@ autocmd CursorHold * let g:held = 1
 let g:vim_dojo_state_dir = '$tmp/state'
 let g:vim_dojo_demo_delay = 0
 function! Goal(drill) abort
-  call vim_dojo#Start([{'kind': 'free', 'technique': '', 'goals': [a:drill]}])
+  call vim_dojo#Start({'kind': 'free', 'technique': '', 'goals': [a:drill]})
 endfunction
-source $root/dojo.vim
+set runtimepath^=$root
 EOF
 
 screen() {
@@ -53,7 +53,7 @@ slowly() {
 }
 
 tmux new-session -d -s "$session" -x 100 -y 30 "vim -Nu '$tmp/vimrc' -i NONE -n"
-check startup 'Start today'
+check startup '^~'
 
 # real-typing-count
 tmux send-keys -t "$session" ":call Goal({'id': 'find-equals', 'ft': 'python', 'lines': ['config[\"timeout\"] = 30'], 'goal': 'Move onto the = sign.', 'solution': 'f='})" Enter
@@ -78,5 +78,43 @@ slowly C-d
 check scroll-pinned 'Last: 1 keys · par 1 · clean'
 
 tmux send-keys -t "$session" ':qa!' Enter
+
+# shell-round, end to end: the shell starts Vim, here a wrapper with the
+# same vimrc, on a custom lesson of ten goals; solving them all returns to
+# the map with the summary and the lesson shaky.
+if command -v go >/dev/null 2>&1 && (cd "$root" && go build -o "$tmp/dojo" .); then
+  mkdir -p "$tmp/bin" "$tmp/drills"
+  printf '#!/bin/sh\nexec %s -Nu %s -i NONE -n "$@"\n' "$(command -v vim)" "$tmp/vimrc" > "$tmp/bin/vim"
+  chmod +x "$tmp/bin/vim"
+  echo '{"id": "zz-beta", "goal": "Change alpha to beta.", "lines": ["alpha"], "expected": ["beta"], "solution": "ciwbeta<Esc>"}' \
+    > "$tmp/drills/beta.json"
+  tmux kill-session -t "$session" 2>/dev/null
+  tmux new-session -d -s "$session" -x 100 -y 30 \
+    "PATH='$tmp/bin':\$PATH VIM_DOJO_ROOT='$root' VIM_DOJO_STATE_DIR='$tmp/shell' VIM_DOJO_DRILL_DIR='$tmp/drills' '$tmp/dojo'"
+  check shell-map 'Start today'
+  tmux send-keys -t "$session" G Enter
+  check shell-round 'Learn  zz-beta  ·  1/10'
+  for _ in $(seq 10); do
+    tmux send-keys -t "$session" ciwbeta Escape
+    sleep 0.2
+  done
+  check shell-round '10 of 10 clean'
+  tmux send-keys -t "$session" Enter
+  check shell-round 'Learn  zz-beta  ·  10 of 10 clean  ·  .*passed'
+  check shell-round '◐ zz-beta  *shaky  *due tomorrow'
+  # Quitting Vim mid-round returns too, and says so.
+  tmux send-keys -t "$session" Enter
+  check shell-round 'Review  zz-beta  ·  1/10'
+  tmux send-keys -t "$session" ':qa!' Enter
+  check shell-round 'Left Review  zz-beta after 0 of 10 goals'
+  # nothing-raw-persisted
+  if grep -rq 'ciw\|beta<' "$tmp/shell"; then
+    echo 'FAIL nothing-raw-persisted: typed keys in the state directory'
+    failed=1
+  fi
+  tmux send-keys -t "$session" q
+else
+  echo 'shell check skipped: no go'
+fi
 [ "$failed" = 0 ] && echo 'typing check passed'
 exit "$failed"

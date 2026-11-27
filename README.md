@@ -5,22 +5,22 @@ rounds of ten goals, counts the keys you use against par, and brings lessons
 back for review when they are due. Practice happens in scratch buffers with your own
 mappings.
 
-Vim Dojo needs Vim 9.1.0597 or later. From this directory:
+Vim Dojo needs Vim 9.1.0597 or later and Go to build its shell. From this
+directory:
 
 ```sh
-vim -S dojo.vim
+go build -o dojo .
+ln -s "$PWD/dojo" ~/.local/bin/dojo
+dojo
 ```
 
-For automatic command registration, install this repository as a Vim package under
-`~/.vim/pack/dojo/start/vim-dojo` and restart Vim. From a Vim session you
-already have open, `:source` this repo’s `dojo.vim`.
+`dojo` opens the map in your terminal. Each round runs in your own `vim`, with
+your config, and you are back at the map when it ends. The shell finds the
+lessons next to the binary, following the link; set `VIM_DOJO_ROOT` to this
+directory if you move the binary instead.
 
-| Command | What it does |
-| --- | --- |
-| `:Dojo` | Resume the session in progress, or open the map. |
-| `:DojoFocus {lesson}` | Practise one lesson, with completion. |
-| `:DojoFree` | Practise one random drill. |
-| `:[range]DojoNote [text]` | Save lines you found awkward to edit to the inbox. |
+For `:DojoNote` in your everyday Vim, install this repository as a Vim package
+under `~/.vim/pack/dojo/start/vim-dojo`. It is the dojo's only Vim command.
 
 ## The map
 
@@ -37,20 +37,22 @@ Foundations           ●●◐◐       2 of 4 solid
   ▷ Review Foundations
 Entering Insert       ○○○○       0 of 4 solid
 
-  ○ new  ◐ shaky  ● solid   Enter practise · p page · q close
+○ new  ◐ shaky  ● solid   Enter open · s stats · q quit
 ```
 
 The curriculum is eleven sections of small lessons, listed in teaching order
 in `lessons/outline.json`. Each lesson is **new** until you pass a learn round
 on it, **shaky** while you are still learning it, and **solid** once you recall
-it reliably, with when it is next due. Press Enter on the session row to start
-today's session, on a section to open or close it, or on a lesson to practise
-just that one. `p` opens a lesson's page, `q` closes the map.
+it reliably, with when it is next due. Move with `j` and `k`. Enter on the
+session row starts today's session. Enter on a lesson opens its page, which
+scrolls with `j`, `k`, and Space; Enter there starts a learn round while the
+lesson is new and a review round after that. `s` shows stats: the clean count
+and seconds per goal of each lesson's recent rounds. `q` quits.
 
 Today's session is a review round for each of up to three due lessons, oldest
-first, then a learn round on the next new lesson. A lesson you open from the
-map gets a learn round while it is new, which starts on its page, and a review
-round after that.
+first, then a learn round on the next new lesson, which opens on its page.
+After each round the map shows how it went, and Enter on the session row
+starts the next. Leaving a round early, by quitting Vim, ends the session.
 
 Every section ends in a review: twenty goals drawn evenly from its lessons,
 with the keys hidden. Take it whenever you like. Passing it places the
@@ -64,9 +66,9 @@ Not passing changes nothing.
 | `<LocalLeader>h` | `:DojoHint` | The solution keys, then a demo. Any hint makes the goal not clean. |
 | `<LocalLeader>r` | `:DojoReset` | Restore the goal and starting cursor. |
 | `<LocalLeader>s` | `:DojoSkip` | Move to the next goal, which is not clean. |
-| `Enter` | `:DojoNext` | Leave a lesson's page or a round's summary. During a round Enter is not mapped. |
+| `Enter` | `:DojoNext` | Leave a round's summary, back to the map. During a round Enter is not mapped. |
 | | `:DojoCheck` | Show where the attempt stands. |
-| | `:DojoClose` | Close the practice tab. |
+| | `:DojoClose` | Leave the round, back to the map. |
 
 `<LocalLeader>` is `\` unless you have set `maplocalleader`.
 
@@ -105,16 +107,19 @@ another number of milliseconds to change that.
 Everything stays on this machine. The dojo records drill IDs, times, outcomes,
 key counts, seconds, and each round's clean count in `${XDG_STATE_HOME:-$HOME/.local/state}/vim-dojo`,
 never the keys you typed. Key capture covers only the practice buffer. Set
-`g:vim_dojo_state_dir` before starting to choose another location. Progress
+`VIM_DOJO_STATE_DIR` in your environment to choose another location; the
+shell, its rounds, and `:DojoNote` all read it. The shell hands Vim each round
+in `round.json` there. Progress
 from v2 of the dojo, graded by a key count that dropped keys, does not carry
 over; its files are left in place.
 
 ## Custom drills
 
 Save one JSON object per `.json` file in `~/.vim/vim-dojo/drills/`, or set
-`g:vim_dojo_drill_dir` to your own directory. A custom drill joins the rounds
+`VIM_DOJO_DRILL_DIR` to your own directory. A custom drill joins the rounds
 of the lesson its `technique` names, after the generated goals, or stands as a
-lesson of its own under Custom. See `:messages` for skipped files.
+lesson of its own under Custom. A file Vim cannot load is left out of its
+round; see `:messages` there.
 
 ```json
 {
@@ -143,7 +148,7 @@ ignored, and so is a `skill`.
 
 To generate one, ask your model for “one Vim editing drill as JSON following
 the example below. Pick a lesson from this list: (paste the lesson ids
-from `:DojoFocus <Tab>`). Give the starting lines, an exact expected buffer,
+from `lessons/outline.json`). Give the starting lines, an exact expected buffer,
 the text the cursor starts on, and the shortest solution in Vim key notation. Use a unique
 lowercase slug as the ID. Return only JSON.” You can paste a sample of the kind
 of text you edit.
@@ -166,6 +171,8 @@ from Custom drills above.
 ## Development
 
 Run the checks from this directory with
-`vim -Nu NONE -i NONE -n -es -S test/dojo.vim`. Set `DOJO_SKILL=foundations` to check
-the drill solutions of one section only. `sh test/typing.sh` types real keys
-into Vim through tmux, with pauses, and is skipped where tmux is missing.
+`vim -Nu NONE -i NONE -n -es -S test/dojo.vim` for the runner and `go test .`
+for the shell. Set `DOJO_SKILL=foundations` to check the drill solutions of one
+section only. `sh test/typing.sh` types real keys into Vim through tmux, with
+pauses, and plays a round from the shell end to end; it is skipped where tmux
+is missing.
