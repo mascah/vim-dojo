@@ -2,6 +2,7 @@ package retry
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -22,7 +23,7 @@ func Do(ctx context.Context, p Policy, fn func() error) error {
 		if err = fn(); err == nil {
 			return nil
 		}
-		wait := p.Base << attempt
+		wait := p.Base << uint(attempt)
 		if wait > p.Max {
 			wait = p.Max
 		}
@@ -33,5 +34,5 @@ func Do(ctx context.Context, p Policy, fn func() error) error {
 		case <-time.After(wait/2 + jitter):
 		}
 	}
-	return err
+	return fmt.Errorf("after %d attempts: %w", p.Attempts, err)
 }

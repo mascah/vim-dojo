@@ -71,10 +71,10 @@ marked.
                "2. Check the dashboards for an hour.", "3. Tell the support channel.", "", "## Notes", "",
                "Ask in the team channel if a step fails."],
      "solution": "'{mark}"},
-    {"id": "delete-to-mark", "ft": "yaml", "start": "  - name: cleanup",
+    {"id": "delete-to-mark", "ft": "yaml", "start": "    run: make {job}",
      "vars": {"job": ["lint", "audit", "bench"]},
      "marked": {"s": "  - name: {job}"},
-     "goal": "Mark s is on the {job} step. Delete every line from it down to the cursor's line.",
+     "goal": "Mark s is on the {job} step's name. Delete the whole step, from the mark down to the cursor's line.",
      "lines": ["steps:", "  - name: build", "    run: make build", "  - name: {job}", "    run: make {job}",
                "  - name: cleanup", "    run: make clean", "  - name: test", "    run: make test"],
      "solution": "d's"}

@@ -19,16 +19,16 @@ func Pending(db *sql.DB, limit int) ([]Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query pending orders: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() // hands the connection back to the pool
 	var orders []Order
 	for rows.Next() {
-		o := Order{Status: "pending"}
+		o := Order{Status: "pending"} // the query only returns pending rows
 		if err := rows.Scan(&o.ID, &o.Customer, &o.Total); err != nil {
 			return nil, fmt.Errorf("scan order: %w", err)
 		}
 		orders = append(orders, o)
 	}
-	return orders, rows.Err()
+	return orders, rows.Err() // Next stops early on a read error
 }
 
 func Cancel(db *sql.DB, id int64) error {
