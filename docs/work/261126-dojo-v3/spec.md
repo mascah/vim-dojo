@@ -1,7 +1,7 @@
 # Vim Dojo v3: a lesson path with long rounds, and a Go shell
 
-Status: direction settled with the author on 2026-11-26. The items under
-"Chosen while writing" in Decisions have not been confirmed yet.
+Status: delivered. Direction settled with the author on 2026-11-26; the
+decisions chosen while writing were confirmed on 2026-11-27.
 
 ## Problem
 
@@ -356,7 +356,7 @@ These reverse v2 decisions, on the evidence of use:
 - **Technique detection** gives way to par, as above.
 - **Vim only** gives way to Go for everything outside a round.
 
-Chosen while writing, open to change:
+Chosen while writing, confirmed by the author on 2026-11-27:
 
 - **Goal generation lives in the runner.** Only Vim knows where `3w` lands or
   what `di(` removes, so the shell never models Vim.
