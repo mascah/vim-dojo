@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -36,7 +36,7 @@ func main() {
 		if c, err = Load(root, drillDir()); err == nil {
 			m := &model{catalog: c, state: stateDir()}
 			m.refresh()
-			_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+			_, err = tea.NewProgram(m).Run()
 		}
 	}
 	if err != nil {
@@ -274,7 +274,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case roundDone:
 		m.finish(msg)
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
 			return m, tea.Quit
@@ -360,7 +360,7 @@ func (m *model) scrollKey(key string, lines int) {
 		m.scroll++
 	case "k", "up":
 		m.scroll--
-	case " ", "f", "pgdown", "ctrl+d":
+	case "space", "f", "pgdown", "ctrl+d":
 		m.scroll += page
 	case "b", "pgup", "ctrl+u":
 		m.scroll -= page
@@ -407,7 +407,7 @@ func (m *model) mixedKey(key string) tea.Cmd {
 		m.length = max(m.length-1, 0)
 	case "l", "right":
 		m.length = min(m.length+1, len(lengths)-1)
-	case " ", "x":
+	case "space", "x":
 		id := sections[m.mixCursor].ID
 		if m.chosen[id] {
 			delete(m.chosen, id)
@@ -562,16 +562,21 @@ func (m *model) finish(done roundDone) {
 	m.refresh()
 }
 
-func (m *model) View() string {
+func (m *model) View() tea.View {
+	var content string
 	switch m.view {
 	case pageView:
-		return m.window(m.pageLines(), faint.Render("Enter start the round · j k scroll · q back"))
+		content = m.window(m.pageLines(), faint.Render("Enter start the round · j k scroll · q back"))
 	case statsView:
-		return m.window(m.statsLines(), faint.Render("j k scroll · q back"))
+		content = m.window(m.statsLines(), faint.Render("j k scroll · q back"))
 	case mixedView:
-		return m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
+		content = m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
+	default:
+		content = m.mapView()
 	}
-	return m.mapView()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
 
 // window shows the lines from the scroll position, with a footer, which

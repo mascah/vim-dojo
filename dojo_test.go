@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func catalog(t *testing.T) *Catalog {
@@ -41,17 +41,20 @@ func round(id, kind string, clean int, passed any, at int64) map[string]any {
 		"clean": clean, "goals": 10, "passed": passed, "seconds": 60, "time": at}
 }
 
-func key(k string) tea.KeyMsg {
-	switch k {
+// press is the message for a key by its name.
+func press(name string) tea.KeyPressMsg {
+	switch name {
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+	return tea.KeyPressMsg{Code: []rune(name)[0], Text: name}
 }
 
-func plain(s string) string { return regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(s, "") }
+func plain(s string) string { return regexp.MustCompile(`\x1b\[[0-9;:]*m`).ReplaceAllString(s, "") }
 
 // outline and shell-map: the eleven sections and their lessons in order,
 // each ending in a review, every lesson new on a fresh state, and the cursor
@@ -90,7 +93,7 @@ func TestMap(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(expected, "\n") {
 		t.Fatalf("rows\n%v\nwant\n%v", got, expected)
 	}
-	view := plain(m.View())
+	view := plain(m.View().Content)
 	for _, text := range []string{"0 due today · 0 in inbox", "New here?", "› ▶ Start today's session",
 		"learn modes and Esc", "○ modes and Esc       new", "▷ Review Foundations", "Enter open · s stats · q quit"} {
 		if !strings.Contains(view, text) {
@@ -156,7 +159,7 @@ func TestPlan(t *testing.T) {
 	}
 	m := &model{catalog: c, state: dir}
 	m.refresh()
-	if view := plain(m.View()); !strings.Contains(view, "3 due today") ||
+	if view := plain(m.View().Content); !strings.Contains(view, "3 due today") ||
 		!strings.Contains(view, "review :g / . / Ctrl-O Ctrl-I  ·  learn modes") {
 		t.Fatalf("session row:\n%s", view)
 	}
@@ -251,7 +254,7 @@ func TestCustom(t *testing.T) {
 	}
 	m := &model{catalog: c, state: t.TempDir()}
 	m.refresh()
-	if view := plain(m.View()); !strings.Contains(view, "Custom") || !strings.Contains(view, "○ old-gone") {
+	if view := plain(m.View().Content); !strings.Contains(view, "Custom") || !strings.Contains(view, "○ old-gone") {
 		t.Fatalf("no Custom section:\n%s", view)
 	}
 }
@@ -263,25 +266,25 @@ func TestPage(t *testing.T) {
 	m := &model{catalog: c, state: t.TempDir()}
 	m.refresh()
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
-	m.Update(key("j"))
-	m.Update(key("j"))
-	m.Update(key("enter"))
+	m.Update(press("j"))
+	m.Update(press("j"))
+	m.Update(press("enter"))
 	if m.view != pageView || m.pending.Lesson.ID != "modes" || m.pending.Kind != "learn" {
 		t.Fatalf("Enter on the first lesson: view %d %+v", m.view, m.pending)
 	}
-	top := plain(m.View())
+	top := plain(m.View().Content)
 	if !strings.Contains(top, "Modes and Esc") || strings.Contains(top, "```") {
 		t.Fatalf("page:\n%s", top)
 	}
-	m.Update(key("j"))
-	if m.scroll != 1 || plain(m.View()) == top {
+	m.Update(press("j"))
+	if m.scroll != 1 || plain(m.View().Content) == top {
 		t.Fatal("the page does not scroll")
 	}
-	m.Update(key("G"))
-	if lines := m.pageLines(); !strings.Contains(m.View(), lines[len(lines)-1]) || m.scroll == 0 {
+	m.Update(press("G"))
+	if lines := m.pageLines(); !strings.Contains(m.View().Content, lines[len(lines)-1]) || m.scroll == 0 {
 		t.Fatal("the end of the page is out of reach")
 	}
-	_, cmd := m.Update(key("enter"))
+	_, cmd := m.Update(press("enter"))
 	if cmd == nil || m.view != mapView {
 		t.Fatal("Enter on the page did not start the round")
 	}
@@ -291,8 +294,8 @@ func TestPage(t *testing.T) {
 		t.Fatalf("request %s %v", data, err)
 	}
 	// A session's learn round on a new lesson opens on its page too.
-	m.Update(key("g"))
-	m.Update(key("enter"))
+	m.Update(press("g"))
+	m.Update(press("enter"))
 	if m.view != pageView || !m.fromSession {
 		t.Fatal("the session's new lesson skipped its page")
 	}
@@ -315,7 +318,7 @@ func TestFinish(t *testing.T) {
 	write(t, dir, map[string]any{"id": "a", "technique": "modes", "result": "clean", "time": now},
 		round("modes", "learn", 8, 1, now))
 	m.Update(roundDone{planned: p, request: Request{Goals: make([]Goal, 10)}, before: map[string]bool{}})
-	view := plain(m.View())
+	view := plain(m.View().Content)
 	for _, text := range []string{"Learn  modes and Esc  ·  8 of 10 clean  ·  1:00  ·  passed",
 		"› ▶ Next round, 2 of 2", "◐ modes and Esc       shaky     due tomorrow"} {
 		if !strings.Contains(view, text) {
@@ -329,13 +332,13 @@ func TestFinish(t *testing.T) {
 	write(t, dir, map[string]any{"id": "b", "technique": "modes", "result": "clean", "time": now + 1},
 		map[string]any{"id": "c", "technique": "modes", "result": "started", "time": now + 1})
 	m.Update(roundDone{planned: m.session[0], request: Request{Goals: make([]Goal, 10)}, before: before})
-	if view := plain(m.View()); !strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean") ||
+	if view := plain(m.View().Content); !strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean") ||
 		!strings.Contains(view, "Start today's session") || len(m.session) != 0 {
 		t.Fatalf("left early:\n%s", view)
 	}
 	// shell-stats: the lesson's recent round, clean of goals and seconds per goal.
-	m.Update(key("s"))
-	if view := plain(m.View()); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
+	m.Update(press("s"))
+	if view := plain(m.View().Content); !strings.Contains(view, "modes and Esc       8/10  6.0s") {
 		t.Fatalf("stats:\n%s", view)
 	}
 }
@@ -395,25 +398,25 @@ func TestMixedShell(t *testing.T) {
 	write(t, dir, round("modes", "learn", 9, true, now), round("hjkl", "learn", 9, true, now))
 	m := &model{catalog: c, state: dir}
 	m.refresh()
-	m.Update(key("j"))
+	m.Update(press("j"))
 	if m.rows[m.cursor].kind != "mixed" {
 		t.Fatalf("no mixed row after the session: %+v", m.rows[m.cursor])
 	}
-	m.Update(key("enter"))
-	if view := plain(m.View()); m.view != mixedView || !strings.Contains(view, "every learned lesson (2)") ||
+	m.Update(press("enter"))
+	if view := plain(m.View().Content); m.view != mixedView || !strings.Contains(view, "every learned lesson (2)") ||
 		!strings.Contains(view, "‹ 20 goals ›") {
 		t.Fatalf("mixed view:\n%s", view)
 	}
-	m.Update(key("l"))
-	m.Update(key("l"))
-	m.Update(key("l"))
-	m.Update(key("j"))
-	m.Update(key(" "))
-	if view := plain(m.View()); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
+	m.Update(press("l"))
+	m.Update(press("l"))
+	m.Update(press("l"))
+	m.Update(press("j"))
+	m.Update(press("space"))
+	if view := plain(m.View().Content); !strings.Contains(view, "‹ 5 minutes ›") || !strings.Contains(view, "[x] Entering Insert") ||
 		!strings.Contains(view, "Entering Insert (4 lessons)") {
 		t.Fatalf("after choosing:\n%s", view)
 	}
-	_, cmd := m.Update(key("enter"))
+	_, cmd := m.Update(press("enter"))
 	var r Request
 	data, err := os.ReadFile(filepath.Join(dir, "round.json"))
 	if cmd == nil || err != nil || json.Unmarshal(data, &r) != nil || r.Kind != "mixed" || r.Limit != 300 {
@@ -431,12 +434,12 @@ func TestMixedShell(t *testing.T) {
 	write(t, dir, map[string]any{"id": "mixed", "result": "round", "kind": "mixed", "clean": 11, "goals": 14,
 		"passed": 0, "seconds": 300, "time": now + 1})
 	m.Update(roundDone{planned: Planned{Kind: "mixed", Limit: 300}, request: r, before: before})
-	view := plain(m.View())
+	view := plain(m.View().Content)
 	if !strings.Contains(view, "Mixed practice  ·  11 of 14 clean  ·  5:00") || strings.Contains(view, "passed") {
 		t.Fatalf("mixed summary:\n%s", view)
 	}
-	m.Update(key("s"))
-	if view := plain(m.View()); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
+	m.Update(press("s"))
+	if view := plain(m.View().Content); !strings.Contains(view, "Mixed practice      11/14 21.4s") {
 		t.Fatalf("stats:\n%s", view)
 	}
 }
