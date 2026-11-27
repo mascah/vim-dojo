@@ -477,11 +477,12 @@ endfunction
 
 " Runs plays with the clipboard out of reach, then puts back what they
 " changed outside the buffer: registers, history, the last f or t, search
-" state, and marks.
+" state, and marks. Searches do not wrap, so a goal that says "after the
+" cursor" never lands before it; a solution that would wrap fails instead.
 function! s:Isolated(Plays) abort
   let snapshot = s:Snapshot()
-  let clipboard = &clipboard
-  set clipboard=
+  let [clipboard, wrapscan] = [&clipboard, &wrapscan]
+  set clipboard= nowrapscan
   try
     let result = a:Plays()
     if histnr(':') != snapshot.history[':'][0]
@@ -491,7 +492,7 @@ function! s:Isolated(Plays) abort
       let s:session.running = 0
     endif
   finally
-    let &clipboard = clipboard
+    let [&clipboard, &wrapscan] = [clipboard, wrapscan]
     call s:Restore(snapshot)
   endtry
   return result
