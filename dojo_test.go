@@ -86,7 +86,7 @@ func TestMap(t *testing.T) {
 	if strings.ContainsAny(view, "◐●") {
 		t.Errorf("not new on a fresh state:\n%s", view)
 	}
-	for _, text := range []string{"› ▶ Start today's session", "▶ learn  modes and Esc", "New here?",
+	for _, text := range []string{"Due today", "› ▶ Start today's session", "▶ learn  modes and Esc", "New here?",
 		"j/k move", "l lessons", "enter open", "q quit"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("dashboard lacks %q:\n%s", text, view)
@@ -114,6 +114,38 @@ func TestMap(t *testing.T) {
 		if !strings.Contains(pane[at:], "▷ Review "+s.Name) {
 			t.Fatalf("%s: no review after its lessons:\n%s", s.Name, pane)
 		}
+	}
+}
+
+// The dashboard's counts: a streak runs back from today, or from yesterday
+// while today is empty, and stops at a gap; an overdue lesson falls due
+// today; every lesson sits in one box.
+func TestMetrics(t *testing.T) {
+	c := catalog(t)
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	write(t, dir, round("modes", "learn", 9, true, now-40*86400), round("hjkl", "learn", 9, true, now),
+		map[string]any{"id": "a", "technique": "hjkl", "result": "clean", "time": now},
+		map[string]any{"id": "b", "technique": "hjkl", "result": "unclean", "time": now - 86400},
+		map[string]any{"id": "c", "technique": "hjkl", "result": "skipped", "time": now - 3*86400})
+	records, today := Records(dir), Day(now)
+	days := Active(records)
+	if days[today] != 1 || Streak(days, today) != 2 || Streak(days, today+1) != 2 || Streak(days, today+2) != 0 {
+		t.Fatalf("days %v: streaks %d %d %d", days, Streak(days, today), Streak(days, today+1), Streak(days, today+2))
+	}
+	if s := Since(records, today); s != (Totals{Rounds: 1, Clean: 9, Goals: 10, Seconds: 60}) {
+		t.Fatalf("today's totals %+v", s)
+	}
+	items := State(c, records)
+	if f := Forecast(items, today, 7); f[0] != 1 || f[1] != 1 || len(f) != 7 {
+		t.Fatalf("forecast %v", f)
+	}
+	boxes, sum := Boxes(items), 0
+	for _, n := range boxes {
+		sum += n
+	}
+	if sum != len(c.Lessons) || boxes[1] != 2 {
+		t.Fatalf("boxes %v", boxes)
 	}
 }
 
@@ -173,7 +205,7 @@ func TestPlan(t *testing.T) {
 		t.Fatalf("plan %v", got)
 	}
 	view := shown(newModel(c, dir))
-	for _, text := range []string{"▶ review :g", "· review .", "· review Ctrl-O Ctrl-I", "· learn  modes and Esc"} {
+	for _, text := range []string{"3 lessons", "▶ review :g", "· review .", "· review Ctrl-O Ctrl-I", "· learn  modes and Esc"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("session pane lacks %q:\n%s", text, view)
 		}

@@ -5,13 +5,16 @@ import (
 	"image/color"
 	"os"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
 
 const (
-	maxWidth = 128 // wider terminals get the shell centred
-	twoPanes = 80  // narrower ones show one pane at a time
+	maxWidth  = 128 // wider terminals get the shell centred
+	twoPanes  = 80  // narrower ones show one pane at a time
+	tileRows  = 4
+	stripRows = 10
 )
 
 // fill puts the footer on the last line and centres the shell in a wide terminal.
@@ -88,7 +91,9 @@ func plural(n int, one string) string {
 	return fmt.Sprintf("%d %ss", n, one)
 }
 
-// homeView is the dashboard: the practice pane and its detail.
+// homeView is the dashboard: tiles, the practice pane and its detail, and on
+// a tall terminal the activity strip. What does not fit is left out, tiles
+// first kept, then the strip.
 func (m *model) homeView() string {
 	w := min(m.width, maxWidth)
 	b := bindings{named(keys.Down, "j/k", "move"), keys.Right, keys.Open, keys.Mixed, keys.Stats, keys.Help, keys.Quit}
@@ -106,9 +111,20 @@ func (m *model) homeView() string {
 	footer := m.footer(w, b, legend)
 	parts := []string{m.header(w, "")}
 	toast := m.toast(w)
+	list := 3 + len(m.sections()) + 2 // two rounds, a rule, the sections, the border
 	rest := m.height - 1 - lipgloss.Height(footer)
 	if toast != "" {
 		rest -= lipgloss.Height(toast)
+	}
+	// Tiles need 14 columns each, and the strip room for a few weeks beside the forecast.
+	tiles := rest >= list+tileRows && w >= 56
+	strip := rest >= list+tileRows+stripRows && w >= twoPanes
+	if tiles {
+		parts = append(parts, m.tiles(w))
+		rest -= tileRows
+	}
+	if strip {
+		rest -= stripRows
 	}
 	rest = max(rest, 4)
 	switch {
@@ -122,6 +138,9 @@ func (m *model) homeView() string {
 			left = 40
 		}
 		parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.practice(left, rest), m.detail(w-left, rest)))
+	}
+	if strip {
+		parts = append(parts, m.strip(w))
 	}
 	if toast != "" {
 		parts = append(parts, toast)
@@ -367,4 +386,202 @@ func (m *model) toast(w int) string {
 		return ""
 	}
 	return lipgloss.NewStyle().Bold(true).Foreground(m.th.text).MaxWidth(w).Render("  " + strings.Join(m.banner, "\n  "))
+}
+
+// tiles is the row of four numbers at the top of the dashboard.
+func (m *model) tiles(w int) string {
+	t := m.th
+	today := m.today()
+	days := Active(m.records)
+	week := Since(m.records, today-6)
+	boxes := Boxes(m.items)
+	total := len(m.catalog.Lessons)
+	solid := boxes[3] + boxes[4] + boxes[5]
+	big := lipgloss.NewStyle().Bold(true).Foreground(t.text)
+	sub := t.fg(t.muted)
+	tw := w / 4
+	inner := tw - 4
+
+	ahead := Forecast(m.items, today, 7)
+	peak := 1
+	for _, n := range ahead {
+		peak = max(peak, n)
+	}
+	var values []float64
+	var colours []color.Color
+	for i, n := range ahead {
+		values = append(values, float64(n)/float64(peak))
+		switch {
+		case n == 0:
+			colours = append(colours, t.line)
+		case i == 0:
+			colours = append(colours, t.shaky)
+		default:
+			colours = append(colours, t.key)
+		}
+	}
+	due := big.Render(fmt.Sprint(ahead[0])) + sub.Render(strings.TrimPrefix(plural(ahead[0], "lesson"), fmt.Sprint(ahead[0]))) +
+		"\n" + spark(values, colours)
+	if inner >= 15 {
+		due += sub.Render(" 7 days")
+	}
+
+	values, colours, peak = nil, nil, 1
+	from := today - int64(min(inner, 14)) + 1
+	for d := from; d <= today; d++ {
+		peak = max(peak, days[d])
+	}
+	for d := from; d <= today; d++ {
+		values = append(values, float64(days[d])/float64(peak))
+		colours = append(colours, t.heat[heatLevel(days[d], peak)])
+	}
+	streak := Streak(days, today)
+	run := big.Render(fmt.Sprint(streak)) + sub.Render(strings.TrimPrefix(plural(streak, "day"), fmt.Sprint(streak))) +
+		"\n" + spark(values, colours)
+
+	fraction := float64(solid) / float64(max(1, total))
+	mastery := big.Render(fmt.Sprint(solid)) + sub.Render(fmt.Sprintf(" of %d", total)) + "\n" +
+		t.bar(inner-5, fraction, t.shaky, t.solid) + sub.Render(fmt.Sprintf(" %3.0f%%", fraction*100))
+
+	values, colours = nil, nil
+	var rounds []Record
+	for _, r := range m.records {
+		if r.Result == "round" {
+			rounds = append(rounds, r)
+		}
+	}
+	for _, r := range rounds[max(0, len(rounds)-inner):] {
+		values = append(values, float64(r.Clean)/float64(max(1, r.Goals)))
+		colours = append(colours, m.passColour(r))
+	}
+	rate := "–"
+	if week.Goals > 0 {
+		rate = fmt.Sprintf("%d%%", week.Clean*100/week.Goals)
+	}
+	clean := big.Render(rate) + sub.Render(" clean")
+	if inner >= 18 {
+		clean += sub.Render(fmt.Sprintf(" · %d min", (week.Seconds+30)/60))
+	}
+	clean += "\n" + spark(values, colours)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		t.card("Due today", "", due, tw, tileRows, false),
+		t.card("Streak", "", run, tw, tileRows, false),
+		t.card("Solid", "", mastery, tw, tileRows, false),
+		t.card("This week", "", clean, w-3*tw, tileRows, false))
+}
+
+func heatLevel(n, peak int) int {
+	if n == 0 {
+		return 0
+	}
+	return 1 + min(3, n*4/(peak+1))
+}
+
+// strip is the row under the panes on a tall terminal: activity by day, the
+// reviews coming up, and how many lessons sit in each box.
+func (m *model) strip(w int) string {
+	t := m.th
+	ahead, boxes := 32, 0
+	if w >= 104 {
+		boxes = 26
+	}
+	heat := w - ahead - boxes
+	weeks := max(1, min((heat-8)/2, 26))
+	out := []string{t.card("Activity", plural(len(Active(m.records)), "day")+" practised", m.heatmap(weeks), heat, stripRows, false),
+		t.card("Next 14 days", "", m.forecast(14, 7), ahead, stripRows, false)}
+	if boxes > 0 {
+		out = append(out, t.card("Boxes", "", m.boxes(boxes-4), boxes, stripRows, false))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, out...)
+}
+
+// heatmap is a calendar of the last weeks, a column a week from Monday down,
+// each day shaded by the goals finished on it.
+func (m *model) heatmap(weeks int) string {
+	t := m.th
+	days, today := Active(m.records), m.today()
+	first := today - (today+3)%7 - int64(weeks-1)*7 // day 0 was a Thursday
+	peak := 1
+	for d := first; d <= today; d++ {
+		peak = max(peak, days[d])
+	}
+	months := []rune(strings.Repeat(" ", weeks*2))
+	for wk := range weeks {
+		date := time.Unix((first+int64(wk)*7)*86400, 0).UTC()
+		if date.Day() <= 7 && wk*2+3 <= len(months) {
+			copy(months[wk*2:], []rune(date.Format("Jan")))
+		}
+	}
+	lines := []string{t.fg(t.muted).Render("    " + string(months))}
+	for weekday, label := range []string{"Mon", "", "Wed", "", "Fri", "", ""} {
+		var b strings.Builder
+		b.WriteString(t.fg(t.muted).Render(pad(label, 4)))
+		for wk := range weeks {
+			d := first + int64(wk)*7 + int64(weekday)
+			if d > today {
+				break
+			}
+			b.WriteString(t.fg(t.heat[heatLevel(days[d], peak)]).Render("■") + " ")
+		}
+		lines = append(lines, b.String())
+	}
+	return strings.Join(lines, "\n")
+}
+
+// forecast is a bar for each of the next days: the lessons falling due.
+func (m *model) forecast(n, rows int) string {
+	t := m.th
+	counts, today := Forecast(m.items, m.today(), n), m.today()
+	peak := 1
+	for _, c := range counts {
+		peak = max(peak, c)
+	}
+	var lines []string
+	for r := rows; r >= 1; r-- {
+		var b strings.Builder
+		for i, c := range counts {
+			colour, char := t.key, " "
+			if i == 0 {
+				colour = t.shaky
+			}
+			switch eighths := c*rows*8/peak - (r-1)*8; {
+			case c == 0 && r == 1:
+				colour, char = t.line, "▁"
+			case eighths >= 8:
+				char = "█"
+			case eighths > 0:
+				char = string(blocks[eighths-1])
+			}
+			b.WriteString(t.fg(colour).Render(char) + " ")
+		}
+		lines = append(lines, b.String())
+	}
+	var labels strings.Builder
+	for i := range counts {
+		labels.WriteString(string("MTWTFSS"[(today+int64(i)+3)%7]) + " ")
+	}
+	return strings.Join(append(lines, t.fg(t.muted).Render(labels.String())), "\n")
+}
+
+func (m *model) boxes(width int) string {
+	t := m.th
+	counts := Boxes(m.items)
+	peak := 1
+	for _, c := range counts {
+		peak = max(peak, c)
+	}
+	var lines []string
+	for box, c := range counts {
+		label, colour := fmt.Sprintf("box %d", box), t.solid
+		switch {
+		case box == 0:
+			label, colour = "new", t.faint
+		case box < 3:
+			colour = t.shaky
+		}
+		lines = append(lines, t.fg(t.muted).Render(pad(label, 6))+
+			t.bar(width-10, float64(c)/float64(peak), colour)+t.fg(t.text).Render(fmt.Sprintf(" %2d", c)))
+	}
+	return strings.Join(lines, "\n")
 }
