@@ -353,24 +353,23 @@ func TestPage(t *testing.T) {
 }
 
 // shell-round: after Vim exits, the shell says how the round went from the
-// records it left, and the dashboard shows the lesson's new state. A round left
-// early says so and drops the rest of the session.
+// records it left and what it did to the lesson, ticks it off the session,
+// and shows the lesson's new state. A round left early says so and ends the
+// session.
 func TestFinish(t *testing.T) {
 	c := catalog(t)
 	dir := t.TempDir()
 	m := newModel(c, dir)
-	m.session = Plan(c, m.items, m.today())
-	m.sessionSize = 2
-	m.session = append(m.session, m.session[0])
-	p := m.session[0]
-	m.session = m.session[1:]
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	p := Plan(c, m.items, m.today())[0]
+	m.session = []Planned{p, p}
 	now := time.Now().Unix()
 	write(t, dir, map[string]any{"id": "a", "technique": "modes", "result": "clean", "time": now},
 		round("modes", "learn", 8, 1, now))
-	m.Update(roundDone{planned: p, request: Request{Goals: make([]Goal, 10)}, before: map[string]bool{}})
+	m.Update(roundDone{planned: p, request: Request{Goals: make([]Goal, 10)}, before: map[string]bool{}, fromSession: true})
 	view := shown(m)
-	for _, text := range []string{"Learn  modes and Esc  ·  8 of 10 clean  ·  1:00  ·  passed",
-		"› ▶ Next round, 2 of 2"} {
+	for _, text := range []string{"PASSED", "Learn  modes and Esc  ·  8 of 10 clean  ·  1:00", "now shaky · due tomorrow",
+		"› ▶ Next round, 2 of 2", "✓ learn  modes and Esc"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("lacks %q:\n%s", text, view)
 		}
@@ -386,8 +385,9 @@ func TestFinish(t *testing.T) {
 	}
 	write(t, dir, map[string]any{"id": "b", "technique": "modes", "result": "clean", "time": now + 1},
 		map[string]any{"id": "c", "technique": "modes", "result": "started", "time": now + 1})
-	m.Update(roundDone{planned: m.session[0], request: Request{Goals: make([]Goal, 10)}, before: before})
-	if view := shown(m); !strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean") ||
+	m.Update(roundDone{planned: p, request: Request{Goals: make([]Goal, 10)}, before: before, fromSession: true})
+	if view := shown(m); !strings.Contains(view, "LEFT EARLY") ||
+		!strings.Contains(view, "Left Learn  modes and Esc after 1 of 10 goals, 1 clean. Nothing was rescheduled.") ||
 		!strings.Contains(view, "Start today's session") || len(m.session) != 0 {
 		t.Fatalf("left early:\n%s", view)
 	}
@@ -491,7 +491,8 @@ func TestMixedShell(t *testing.T) {
 		"passed": 0, "seconds": 300, "time": now + 1})
 	m.Update(roundDone{planned: Planned{Kind: "mixed", Limit: 300}, request: r, before: before})
 	view := shown(m)
-	if !strings.Contains(view, "Mixed practice  ·  11 of 14 clean  ·  5:00") || strings.Contains(view, "passed") {
+	if !strings.Contains(view, "DONE") || !strings.Contains(view, "Mixed practice  ·  11 of 14 clean  ·  5:00") ||
+		strings.Contains(view, "PASSED") {
 		t.Fatalf("mixed summary:\n%s", view)
 	}
 	m.Update(press("s"))

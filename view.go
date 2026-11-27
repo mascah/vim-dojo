@@ -47,6 +47,9 @@ func (m *model) layout() {
 	}
 }
 
+// grow scales a bar by the spring, so bars fill as the dashboard appears.
+func (m *model) grow(v float64) float64 { return v * max(0, m.pos) }
+
 // fill puts the footer on the last line and centres the shell in a wide terminal.
 func (m *model) fill(body, footer string) string {
 	gap := max(0, m.height-lipgloss.Height(body)-lipgloss.Height(footer))
@@ -144,7 +147,7 @@ func (m *model) homeView() string {
 	list := 3 + len(m.sections()) + 2 // two rounds, a rule, the sections, the border
 	rest := m.height - 1 - lipgloss.Height(footer)
 	if toast != "" {
-		rest -= lipgloss.Height(toast)
+		rest--
 	}
 	// Tiles need 14 columns each, and the strip room for a few weeks beside the forecast.
 	tiles := rest >= list+tileRows && w >= 56
@@ -204,8 +207,8 @@ func (m *model) practice(w, h int) string {
 	t := m.th
 	inner, focused := max(1, w-4), !m.inDetail
 	label := "Start today's session"
-	if len(m.session) > 0 {
-		label = fmt.Sprintf("Next round, %d of %d", m.sessionSize-len(m.session)+1, m.sessionSize)
+	if len(m.done) > 0 {
+		label = fmt.Sprintf("Next round, %d of %d", len(m.done)+1, len(m.session))
 	}
 	action := func(i int, text string) string {
 		style := lipgloss.NewStyle().Bold(true).Foreground(t.text)
@@ -344,8 +347,8 @@ func (m *model) sectionPane(s Section, w, h int) string {
 	return t.card(s.Name, fmt.Sprintf("%d of %d solid", solid, len(lessons)), strings.Join(lines, "\n"), w, h, m.inDetail)
 }
 
-// sessionPane is today's session round by round: what is next and what is
-// still to come.
+// sessionPane is today's session round by round: what is done and how it
+// went, what is next, what is still to come.
 func (m *model) sessionPane(w, h int) string {
 	t := m.th
 	inner, today := max(1, w-4), m.today()
@@ -364,11 +367,20 @@ func (m *model) sessionPane(w, h int) string {
 		if lipgloss.Width(state+more) <= inner-31 {
 			state += t.fg(t.muted).Render(more)
 		}
-		if i == 0 {
+		switch {
+		case i < len(m.done):
+			r := m.done[i]
+			mark, style = "✓", t.fg(t.solid)
+			verdict := t.fg(t.solid).Render("passed")
+			if !r.passed {
+				mark, style, verdict = "✗", t.fg(t.fail), t.fg(t.fail).Render("not passed")
+			}
+			state = t.fg(t.muted).Render(fmt.Sprintf("%d of %d · %d:%02d · ", r.clean, r.goals, r.seconds/60, r.seconds%60)) + verdict
+		case i == len(m.done):
 			mark, style = "▶", t.fg(t.accent).Bold(true)
 		}
 		lines = append(lines, " "+style.Render(mark)+" "+t.fg(t.muted).Render(pad(p.Kind, 7))+
-			lipgloss.NewStyle().Bold(i == 0).Foreground(t.text).Render(pad(truncate(p.Lesson.Title, 19), 20))+state)
+			lipgloss.NewStyle().Bold(i == len(m.done)).Foreground(t.text).Render(pad(truncate(p.Lesson.Title, 19), 20))+state)
 	}
 	hint := "A session reviews up to three due lessons, oldest first, then teaches the next new one. " +
 		"Eight clean goals of ten pass a round."
@@ -377,8 +389,8 @@ func (m *model) sessionPane(w, h int) string {
 	}
 	lines = append(lines, "", t.fg(t.faint).Width(inner).PaddingLeft(1).Render(hint))
 	note := plural(len(plan), "round")
-	if len(m.session) > 0 {
-		note = fmt.Sprintf("round %d of %d", m.sessionSize-len(m.session)+1, m.sessionSize)
+	if len(m.done) > 0 {
+		note = fmt.Sprintf("round %d of %d", len(m.done)+1, len(plan))
 	}
 	return t.card("Today's session", note, strings.Join(lines, "\n"), w, h, false)
 }
@@ -417,12 +429,36 @@ func (m *model) over() string {
 	return fmt.Sprintf("%s (%s)", strings.Join(names, ", "), plural(n, "lesson"))
 }
 
-// toast is the last round's summary above the footer.
+// toast is the last round on one line above the footer: whether it passed,
+// the count and time, and what it did to the lesson.
 func (m *model) toast(w int) string {
-	if len(m.banner) == 0 {
+	r := m.last
+	if r == nil {
 		return ""
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(m.th.text).MaxWidth(w).Render("  " + strings.Join(m.banner, "\n  "))
+	t := m.th
+	tag := t.pill("NOT PASSED", t.fail)
+	switch {
+	case r.failed:
+		tag = t.pill("ERROR", t.fail)
+	case r.left:
+		tag = t.pill("LEFT EARLY", t.muted)
+	case r.kind == "mixed":
+		tag = t.pill("DONE", t.key)
+	case r.passed:
+		tag = t.pill("PASSED", t.solid)
+	}
+	// A round that did not end keeps the sentence the shell has always said.
+	if r.left || r.failed {
+		return lipgloss.NewStyle().MaxWidth(w).Render(" " + tag + " " + t.fg(t.text).Render(r.note))
+	}
+	line := " " + tag + " " + lipgloss.NewStyle().Bold(true).Foreground(t.text).Render(r.title) +
+		t.fg(t.muted).Render(fmt.Sprintf("  ·  %d of %d clean  ·  %d:%02d  ", r.clean, r.goals, r.seconds/60, r.seconds%60)) +
+		t.bar(12, m.grow(float64(r.clean)/float64(max(1, r.goals))), t.shaky, t.solid)
+	if r.note != "" {
+		line += t.fg(t.text).Render("  " + r.note)
+	}
+	return lipgloss.NewStyle().MaxWidth(w).Render(line)
 }
 
 // tiles is the row of four numbers at the top of the dashboard.
@@ -478,7 +514,7 @@ func (m *model) tiles(w int) string {
 
 	fraction := float64(solid) / float64(max(1, total))
 	mastery := big.Render(fmt.Sprint(solid)) + sub.Render(fmt.Sprintf(" of %d", total)) + "\n" +
-		t.bar(inner-5, fraction, t.shaky, t.solid) + sub.Render(fmt.Sprintf(" %3.0f%%", fraction*100))
+		t.bar(inner-5, m.grow(fraction), t.shaky, t.solid) + sub.Render(fmt.Sprintf(" %3.0f%%", fraction*100))
 
 	values, colours = nil, nil
 	var rounds []Record
@@ -618,7 +654,7 @@ func (m *model) boxes(width int) string {
 			colour = t.shaky
 		}
 		lines = append(lines, t.fg(t.muted).Render(pad(label, 6))+
-			t.bar(width-10, float64(c)/float64(peak), colour)+t.fg(t.text).Render(fmt.Sprintf(" %2d", c)))
+			t.bar(width-10, m.grow(float64(c)/float64(peak)), colour)+t.fg(t.text).Render(fmt.Sprintf(" %2d", c)))
 	}
 	return strings.Join(lines, "\n")
 }

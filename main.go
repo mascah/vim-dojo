@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/harmonica"
 )
 
 func main() {
@@ -88,6 +90,16 @@ var lengths = []struct {
 
 const defaultLength = 1
 
+// result is how a round went, for the line above the footer and the session
+// pane. A round that did not end has its sentence in note.
+type result struct {
+	title, note          string
+	kind                 string
+	clean, goals         int
+	seconds              int64
+	passed, left, failed bool
+}
+
 type model struct {
 	catalog       *Catalog
 	state         string
@@ -105,23 +117,31 @@ type model struct {
 	page, stats   viewport.Model
 	pending       Planned // the round a page starts
 	fromSession   bool
-	session       []Planned // the rest of today's session once it has started
-	sessionSize   int
-	banner        []string
+	session       []Planned // today's session once started
+	done          []result  // its finished rounds
+	last          *result
 	length        int             // the mixed round's, in lengths
 	chosen        map[string]bool // the sections a mixed round is over
 	mixCursor     int
+	spring        harmonica.Spring
+	pos, vel      float64 // bars grow from 0 to 1 when the dashboard appears
 }
 
 func newModel(c *Catalog, state string) *model {
 	m := &model{catalog: c, state: state, th: newTheme(true), help: help.New(),
-		chosen: map[string]bool{}, length: defaultLength}
+		chosen: map[string]bool{}, length: defaultLength, spring: harmonica.NewSpring(harmonica.FPS(60), 7, 0.8)}
 	m.help.Styles = m.th.help()
 	m.refresh()
 	return m
 }
 
-func (m *model) Init() tea.Cmd { return tea.RequestBackgroundColor }
+type frameMsg struct{}
+
+func frame() tea.Cmd {
+	return tea.Tick(time.Second/60, func(time.Time) tea.Msg { return frameMsg{} })
+}
+
+func (m *model) Init() tea.Cmd { return tea.Batch(tea.RequestBackgroundColor, frame()) }
 
 // refresh rereads the records and the inbox.
 func (m *model) refresh() {
@@ -183,8 +203,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.th = newTheme(msg.IsDark())
 		m.help.Styles = m.th.help()
 		m.layout()
+	case frameMsg:
+		m.pos, m.vel = m.spring.Update(m.pos, m.vel, 1)
+		if math.Abs(1-m.pos) > 0.002 || math.Abs(m.vel) > 0.002 {
+			return m, frame()
+		}
+		m.pos, m.vel = 1, 0
 	case roundDone:
 		m.finish(msg)
+		return m, frame()
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -211,7 +238,8 @@ func (m *model) homeKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
 	case key.Matches(msg, keys.Stats):
-		m.screen = statsScreen
+		// Stats are drawn once, so their bars start full.
+		m.screen, m.pos, m.vel = statsScreen, 1, 0
 		m.layout()
 		m.stats.GotoTop()
 	case key.Matches(msg, keys.Mixed):
@@ -249,11 +277,10 @@ func (m *model) open(enter bool) tea.Cmd {
 	case !enter:
 	case m.left == 0:
 		if len(m.session) == 0 {
-			m.session = m.plan()
-			m.sessionSize = len(m.session)
+			m.session, m.done = m.plan(), nil
 		}
-		if len(m.session) > 0 {
-			return m.before(m.session[0], true)
+		if len(m.session) > len(m.done) {
+			return m.before(m.session[len(m.done)], true)
 		}
 	case m.left == 1:
 		m.dialog = true
@@ -357,20 +384,15 @@ func (m *model) before(p Planned, fromSession bool) tea.Cmd {
 }
 
 type roundDone struct {
-	planned Planned
-	request Request
-	before  map[string]bool
-	err     error
+	planned     Planned
+	request     Request
+	before      map[string]bool
+	fromSession bool
+	err         error
 }
 
 // start writes the round's request and hands the terminal to Vim.
 func (m *model) start(p Planned, fromSession bool) tea.Cmd {
-	if fromSession {
-		m.session = m.session[1:]
-	} else {
-		// A round outside the session can change what the session should be.
-		m.session = nil
-	}
 	request := Draw(m.catalog, p, m.records)
 	before := map[string]bool{}
 	for _, r := range Records(m.state) {
@@ -383,13 +405,13 @@ func (m *model) start(p Planned, fromSession bool) tea.Cmd {
 		err = os.WriteFile(path, data, 0o600)
 	}
 	if err != nil {
-		return func() tea.Msg { return roundDone{p, request, before, err} }
+		return func() tea.Msg { return roundDone{p, request, before, fromSession, err} }
 	}
 	cmd := exec.Command("vim",
 		"-c", "set runtimepath^="+vimEscape(m.catalog.Root),
 		"-c", "runtime plugin/vim_dojo.vim", // :DojoNote, if not installed as a package
 		"-c", "call vim_dojo#Run("+vimString(path)+")")
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return roundDone{p, request, before, err} })
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return roundDone{p, request, before, fromSession, err} })
 }
 
 func vimString(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
@@ -399,21 +421,24 @@ func vimEscape(s string) string {
 }
 
 // finish reads what the round left in the state directory and says how it
-// went. A round left early drops the rest of the session.
+// went. The session goes on only after a round of its own that ended; one
+// left early, one Vim could not run, or one outside it ends it, since a round
+// outside it can change what it should be.
 func (m *model) finish(done roundDone) {
 	os.Remove(filepath.Join(m.state, "round.json"))
-	title := done.planned.Title(m.catalog)
-	if done.err != nil {
-		m.banner = []string{"Could not run Vim for " + title + ": " + done.err.Error()}
-		m.session = nil
-		m.refresh()
-		return
+	p := done.planned
+	title := p.Title(m.catalog)
+	res := result{title: title, kind: p.Kind}
+	// The lesson as it was, to say what the round did to it.
+	var was Item
+	if p.Lesson != nil {
+		was = *m.items[p.Lesson.ID]
 	}
 	var round *Record
 	counts := map[string]int{}
 	placed := 0
 	for _, r := range Records(m.state) {
-		if done.before[r.Name] {
+		if done.err != nil || done.before[r.Name] {
 			continue
 		}
 		counts[r.Result]++
@@ -424,30 +449,52 @@ func (m *model) finish(done roundDone) {
 			placed++
 		}
 	}
-	finished := counts["clean"] + counts["unclean"] + counts["skipped"]
-	if round == nil {
+	switch {
+	case done.err != nil:
+		res.failed, res.note = true, "Could not run Vim for "+title+": "+done.err.Error()
+	case round == nil:
+		finished := counts["clean"] + counts["unclean"] + counts["skipped"]
 		of := fmt.Sprintf(" of %d", max(done.request.Count, len(done.request.Goals)))
 		if done.request.Limit > 0 {
 			of = ""
 		}
-		m.banner = []string{fmt.Sprintf("Left %s after %d%s goals, %d clean. Nothing was rescheduled.",
-			title, finished, of, counts["clean"])}
-		m.session = nil
-	} else {
-		m.banner = []string{fmt.Sprintf("%s  ·  %d of %d clean  ·  %d:%02d",
-			title, round.Clean, round.Goals, round.Seconds/60, round.Seconds%60)}
-		if round.Kind != "mixed" {
-			m.banner[0] += map[bool]string{true: "  ·  passed", false: "  ·  not passed"}[round.Pass()]
-		}
-		if placed > 0 {
-			m.banner = append(m.banner, fmt.Sprintf("%d %s placed as known.", placed,
-				map[bool]string{true: "lesson", false: "lessons"}[placed == 1]))
-		}
-	}
-	if len(m.session) == 0 {
-		m.sessionSize = 0
+		res.left, res.note = true, fmt.Sprintf("Left %s after %d%s goals, %d clean. Nothing was rescheduled.",
+			title, finished, of, counts["clean"])
+	default:
+		res.clean, res.goals, res.seconds, res.passed = round.Clean, round.Goals, round.Seconds, round.Pass()
 	}
 	m.refresh()
+	switch {
+	case round != nil && placed > 0:
+		res.note = plural(placed, "lesson") + " placed as known"
+	case round != nil && p.Lesson != nil && p.Kind != "mixed":
+		res.note = moved(was, *m.items[p.Lesson.ID], m.today())
+	}
+	m.last = &res
+	if done.fromSession && round != nil {
+		if m.done = append(m.done, res); len(m.done) == len(m.session) {
+			m.session, m.done = nil, nil
+		}
+	} else {
+		m.session, m.done = nil, nil
+	}
+	m.pos, m.vel = 0, 0
+}
+
+// moved says what a round did to its lesson's place in review.
+func moved(was, now Item, today int64) string {
+	when := due(&now, today)
+	switch {
+	case now.Box == 0:
+		return "still new"
+	case was.Box == 0:
+		return "now shaky · " + when
+	case now.Box > was.Box:
+		return fmt.Sprintf("box %d → %d · %s", was.Box, now.Box, when)
+	case now.Box < was.Box:
+		return fmt.Sprintf("back to box 1 · %s", when)
+	}
+	return when
 }
 
 func (m *model) View() tea.View {
