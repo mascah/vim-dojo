@@ -171,7 +171,7 @@ func TestDraw(t *testing.T) {
 	write(t, dir, round("hjkl", "learn", 9, true, time.Now().Unix()))
 	records := Records(dir)
 	r := Draw(c, Planned{Kind: "learn", Lesson: c.ByID["quote"]}, records)
-	if len(r.Goals) != 10 || !r.Demo || r.Technique != "quote" {
+	if len(r.Goals) != 10 || !r.Demo || r.Lesson != "quote" {
 		t.Fatalf("quote round %+v", r)
 	}
 	for i, g := range r.Goals {
@@ -287,7 +287,7 @@ func TestPage(t *testing.T) {
 	}
 	var r Request
 	data, err := os.ReadFile(filepath.Join(m.state, "round.json"))
-	if err != nil || json.Unmarshal(data, &r) != nil || r.Kind != "learn" || r.Technique != "modes" || len(r.Goals) != 10 {
+	if err != nil || json.Unmarshal(data, &r) != nil || r.Kind != "learn" || r.Lesson != "modes" || len(r.Goals) != 10 {
 		t.Fatalf("request %s %v", data, err)
 	}
 	// A session's learn round on a new lesson opens on its page too.
@@ -355,7 +355,7 @@ func TestMixed(t *testing.T) {
 	count := map[string]int{}
 	for range 50 {
 		r := Draw(c, Planned{Kind: "mixed", Lessons: learned, Count: 20}, records)
-		if len(r.Goals) != 20 || r.Kind != "mixed" || r.Demo || r.Technique != "" || r.Limit != 0 {
+		if len(r.Goals) != 20 || r.Kind != "mixed" || r.Demo || r.Lesson != "" || r.Limit != 0 {
 			t.Fatalf("mixed round %+v", r)
 		}
 		lessons := map[string]int{}

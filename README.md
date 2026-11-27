@@ -180,7 +180,7 @@ from Custom drills above.
 
 Run the checks from this directory with
 `vim -Nu NONE -i NONE -n -es -S test/dojo.vim` for the runner and `go test .`
-for the shell. Set `DOJO_SKILL=foundations` to check the drill solutions of one
+for the shell. Set `DOJO_SECTION=foundations` to check the drill solutions of one
 section only. `sh test/typing.sh` types real keys into Vim through tmux, with
 pauses, and plays a round from the shell end to end; it is skipped where tmux
 is missing.

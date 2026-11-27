@@ -148,10 +148,10 @@ func (c *Catalog) custom(builtin map[string]bool) {
 			continue
 		}
 		var drill struct {
-			ID        string   `json:"id"`
-			Goal      string   `json:"goal"`
-			Technique string   `json:"technique"`
-			Lines     []string `json:"lines"`
+			ID     string   `json:"id"`
+			Goal   string   `json:"goal"`
+			Lesson string   `json:"technique"` // custom drill files keep the v2 name
+			Lines  []string `json:"lines"`
 		}
 		if json.Unmarshal(data, &drill) != nil || drill.Goal == "" || len(drill.Lines) == 0 {
 			continue
@@ -163,11 +163,11 @@ func (c *Catalog) custom(builtin map[string]bool) {
 			continue
 		}
 		seen[drill.ID] = true
-		technique := drill.Technique
-		if to, ok := renamed[technique]; ok {
-			technique = to
+		id := drill.Lesson
+		if to, ok := renamed[id]; ok {
+			id = to
 		}
-		if lesson := c.ByID[technique]; lesson != nil && lesson.Section != "custom" {
+		if lesson := c.ByID[id]; lesson != nil && lesson.Section != "custom" {
 			lesson.Drills = append(lesson.Drills, Drill{ID: drill.ID, Custom: true})
 			continue
 		}
@@ -201,17 +201,17 @@ func (c *Catalog) InSection(id string) []*Lesson {
 
 // Record is one file in the state directory: a goal, a round, or a placement.
 type Record struct {
-	Name      string `json:"-"`
-	ID        string `json:"id"`
-	Time      int64  `json:"time"`
-	Result    string `json:"result"`
-	Technique string `json:"technique"`
-	Section   string `json:"section"`
-	Kind      string `json:"kind"`
-	Clean     int    `json:"clean"`
-	Goals     int    `json:"goals"`
-	Passed    any    `json:"passed"` // Vim writes 1 and 0, tests write true
-	Seconds   int64  `json:"seconds"`
+	Name    string `json:"-"`
+	ID      string `json:"id"`
+	Time    int64  `json:"time"`
+	Result  string `json:"result"`
+	Lesson  string `json:"technique"` // records keep the v2 name
+	Section string `json:"section"`
+	Kind    string `json:"kind"`
+	Clean   int    `json:"clean"`
+	Goals   int    `json:"goals"`
+	Passed  any    `json:"passed"` // Vim writes 1 and 0, tests write true
+	Seconds int64  `json:"seconds"`
 }
 
 func (r Record) Pass() bool {
@@ -283,7 +283,7 @@ func State(c *Catalog, records []Record) map[string]*Item {
 		state[l.ID] = &Item{}
 	}
 	for _, r := range records {
-		item := state[r.Technique]
+		item := state[r.Lesson]
 		if item == nil || r.Result != "round" && r.Result != "placed" {
 			continue
 		}
@@ -358,16 +358,16 @@ type Goal struct {
 // Request is the round the shell hands the runner, written to round.json in
 // the state directory.
 type Request struct {
-	Kind      string   `json:"kind"`
-	Technique string   `json:"technique"`
-	Section   string   `json:"section,omitempty"`
-	Name      string   `json:"name,omitempty"`
-	Goals     []Goal   `json:"goals"`
-	Demo      bool     `json:"demo"`
-	Place     []string `json:"place"`
-	Drills    string   `json:"drills"`
-	Limit     int      `json:"limit,omitempty"` // seconds, for a timed mixed round
-	Count     int      `json:"count,omitempty"` // goals, for a mixed round by count
+	Kind    string   `json:"kind"`
+	Lesson  string   `json:"lesson"`
+	Section string   `json:"section,omitempty"`
+	Name    string   `json:"name,omitempty"`
+	Goals   []Goal   `json:"goals"`
+	Demo    bool     `json:"demo"`
+	Place   []string `json:"place"`
+	Drills  string   `json:"drills"`
+	Limit   int      `json:"limit,omitempty"` // seconds, for a timed mixed round
+	Count   int      `json:"count,omitempty"` // goals, for a mixed round by count
 }
 
 // Order lists a lesson's drills least recently tried first, and among those
@@ -422,7 +422,7 @@ func Draw(c *Catalog, p Planned, records []Record) Request {
 		return Mixed(c, p, state, records, Day(time.Now().Unix()))
 	}
 	if p.Section == "" {
-		return Request{Kind: p.Kind, Technique: p.Lesson.ID, Goals: Goals(p.Lesson, records),
+		return Request{Kind: p.Kind, Lesson: p.Lesson.ID, Goals: Goals(p.Lesson, records),
 			Demo: p.Kind == "learn" && state[p.Lesson.ID].Rounds == 0, Place: []string{}, Drills: c.Drills}
 	}
 	lessons := c.InSection(p.Section)

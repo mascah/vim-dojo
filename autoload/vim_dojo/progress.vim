@@ -20,8 +20,8 @@ function! vim_dojo#progress#Attempt() abort
   return printf('%012d-%010d-%06d.json', localtime(), getpid(), s:attempt)
 endfunction
 
-" A goal record holds the drill id, technique, result, key count, and
-" seconds; a round record the technique, kind, clean count, goals, whether
+" A goal record holds the drill id, lesson, result, key count, and
+" seconds; a round record the lesson, kind, clean count, goals, whether
 " it passed, and seconds. Never the keys themselves. A record that could not
 " be written is tried again with the next.
 function! vim_dojo#progress#Record(attempt, record) abort

@@ -32,9 +32,9 @@ function! vim_dojo#Run(path) abort
   let g:vim_dojo_drill_dir = round.drills
   let s:run = 1
   let drills = {}
-  for technique in vim_dojo#drills#Techniques()
-    for drill in technique.drills
-      let drills[technique.id . ' ' . drill.id] = drill
+  for lesson in vim_dojo#drills#Lessons()
+    for drill in lesson.drills
+      let drills[lesson.id . ' ' . drill.id] = drill
     endfor
   endfor
   call map(round.goals, {_, goal -> get(goal, 'generated') ? {'generated': 1, 'lesson': goal.lesson}
@@ -49,7 +49,7 @@ function! vim_dojo#Run(path) abort
   silent! tabonly
 endfunction
 
-" Runs a round: {'kind', 'technique', 'goals'}, where kind is learn,
+" Runs a round: {'kind', 'lesson', 'goals'}, where kind is learn,
 " review, section, mixed, or free, and goals is a list of drills. `demo` asks
 " for the first goal to be demonstrated. A section round also names its
 " `section`, the section's `name`, and in `place` the lessons a pass places.
@@ -57,12 +57,12 @@ endfunction
 " A `count` larger than the goals repeats them up to that many.
 function! vim_dojo#Start(round) abort
   call s:StopDemo()
-  let techniques = {}
-  for technique in vim_dojo#drills#Techniques()
-    let techniques[technique.id] = technique
+  let lessons = {}
+  for lesson in vim_dojo#drills#Lessons()
+    let lessons[lesson.id] = lesson
   endfor
   call s:Open()
-  call extend(s:session, {'techniques': techniques, 'warning': '', 'demo': {}, 'running': 0})
+  call extend(s:session, {'lessons': lessons, 'warning': '', 'demo': {}, 'running': 0})
   call s:OpenRound(a:round)
 endfunction
 
@@ -206,22 +206,22 @@ endfunction
 " mid-mapping or mid-burst opens the next with keys still queued, and
 " playing a solution then would run them too.
 " A goal {'generated': 1} is drawn from the generators of its `lesson`, or
-" of the round's technique, and the rest are drills.
+" of the round's lesson, and the rest are drills.
 function! s:OpenRound(round) abort
   let round = a:round
-  let technique = get(s:session.techniques, round.technique, {})
+  let lesson = get(s:session.lessons, round.lesson, {})
   let generated = {}
   for goal in filter(copy(round.goals), 'get(v:val, "generated")')
-    let id = get(goal, 'lesson', round.technique)
+    let id = get(goal, 'lesson', round.lesson)
     let generated[id] = add(get(generated, id, []), goal)
   endfor
   for [id, goals] in items(generated)
-    let generated[id] = s:Generated(s:session.techniques[id], goals)
+    let generated[id] = s:Generated(s:session.lessons[id], goals)
   endfor
   let tasks = []
   for goal in round.goals
     if get(goal, 'generated')
-      call add(tasks, remove(generated[get(goal, 'lesson', round.technique)], 0))
+      call add(tasks, remove(generated[get(goal, 'lesson', round.lesson)], 0))
     else
       let s:session.task = vim_dojo#drills#Instance(goal)
       call s:Prepare()
@@ -235,7 +235,7 @@ function! s:OpenRound(round) abort
     call extend(tasks, deepcopy(base))
   endwhile
   let tasks = tasks[: max([get(round, 'count', 0), len(base)]) - 1]
-  call extend(s:session, {'round': round, 'tasks': tasks, 'technique': technique, 'index': 0,
+  call extend(s:session, {'round': round, 'tasks': tasks, 'lesson': lesson, 'index': 0,
         \ 'results': [], 'summary': 0, 'last': '', 'round_started': localtime(),
         \ 'demo_first': get(round, 'demo', 0), 'limit': get(round, 'limit', 0)})
   if s:session.limit > 0
@@ -757,7 +757,6 @@ function! s:Finish(clean, keys) abort
   let task = s:session.task
   let entry = {'clean': a:clean, 'keys': a:keys, 'par': get(task, 'par', -1), 'hinted': s:session.hinted,
         \ 'goal': task.goal, 'solution': has_key(task, 'tokens') ? vim_dojo#drills#Show(task.tokens) : task.keys,
-        \ 'technique': get(task, 'technique', ''),
         \ 'advice': a:clean || a:keys < 0 ? [] : s:Advice(s:Streams())}
   call add(s:session.results, entry)
   let s:session.last = 'Last: ' . s:Outcome(entry)
@@ -788,7 +787,7 @@ function! s:Outcome(entry) abort
   return join(parts, ' · ')
 endfunction
 
-" A learn or review round leaves a record that schedules its technique; a
+" A learn or review round leaves a record that schedules its lesson; a
 " mixed round's names none, so it feeds stats only. Leaving a round early
 " leaves none, so it changes no schedule.
 function! s:EndRound() abort
@@ -801,12 +800,12 @@ function! s:EndRound() abort
   let record = {'result': 'round', 'kind': round.kind, 'clean': clean, 'goals': goals,
         \ 'passed': s:session.passed, 'seconds': s:session.seconds}
   if index(['learn', 'review'], round.kind) >= 0
-    call s:Write(extend(record, {'id': round.technique, 'technique': round.technique}))
+    call s:Write(extend(record, {'id': round.lesson, 'technique': round.lesson}))
   elseif round.kind ==# 'mixed'
     call s:Write(extend(record, {'id': 'mixed'}))
   endif
   " A passed section review places the lessons its request names, the
-  " section's new ones, as known. Its own record names no technique, so it
+  " section's new ones, as known. Its own record names no lesson, so it
   " moves no box.
   let s:session.placed = []
   if round.kind ==# 'section'
@@ -925,8 +924,9 @@ endfunction
 function! s:Save(result, ...) abort
   let task = s:session.task
   let record = extend({'id': task.id, 'result': a:result}, get(a:, 1, {}))
-  if has_key(task, 'technique')
-    let record.technique = task.technique
+  " Records keep the v2 field name.
+  if has_key(task, 'lesson')
+    let record.technique = task.lesson
   endif
   call s:Write(record, s:session.attempt)
 endfunction
@@ -938,9 +938,9 @@ endfunction
 
 function! s:Title() abort
   let kind = s:session.round.kind
-  let technique = s:session.technique
-  let title = kind ==# 'learn' ? 'Learn  ' . technique.title
-        \ : kind ==# 'review' ? 'Review  ' . technique.title
+  let lesson = s:session.lesson
+  let title = kind ==# 'learn' ? 'Learn  ' . lesson.title
+        \ : kind ==# 'review' ? 'Review  ' . lesson.title
         \ : kind ==# 'section' ? 'Section review  ' . s:session.round.name
         \ : kind ==# 'mixed' ? 'Mixed practice' : 'Free practice'
   return 'Vim Dojo  ·  ' . title
@@ -978,7 +978,7 @@ function! s:Render() abort
     let lines = s:Summary()
   else
     let task = s:session.task
-    let technique = s:session.technique
+    let lesson = s:session.lesson
     let goal = s:session.step > 0 ? 'Return to the original call.' : task.goal
     if s:session.limit > 0
       let left = max([0, s:session.limit - (localtime() - s:session.round_started)])
@@ -988,8 +988,8 @@ function! s:Render() abort
     endif
     if s:session.round.kind ==# 'learn'
       " A learn round keeps the lesson's keys in view for every goal.
-      let width = max(map(copy(technique.keys), 'strdisplaywidth(v:val[0])'))
-      call extend(lines, map(copy(technique.keys), {index, pair -> (index ? '      ' : 'Keys  ')
+      let width = max(map(copy(lesson.keys), 'strdisplaywidth(v:val[0])'))
+      call extend(lines, map(copy(lesson.keys), {index, pair -> (index ? '      ' : 'Keys  ')
             \ . pair[0] . repeat(' ', width - strdisplaywidth(pair[0])) . '  ' . pair[1]}) + [''])
     endif
     if !empty(s:session.last)

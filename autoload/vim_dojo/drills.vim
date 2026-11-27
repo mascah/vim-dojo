@@ -15,35 +15,35 @@ endfunction
 
 " Every lesson in outline order, each with its scenarios as `drills`.
 " Custom drills join their declared lesson, or stand as a lesson of their own.
-function! vim_dojo#drills#Techniques() abort
+function! vim_dojo#drills#Lessons() abort
   if empty(s:lessons)
-    let s:lessons = s:Lessons()
+    let s:lessons = s:Read()
   endif
-  let techniques = deepcopy(s:lessons)
+  let lessons = deepcopy(s:lessons)
   let by_id = {}
-  for technique in techniques
-    let by_id[technique.id] = technique
+  for lesson in lessons
+    let by_id[lesson.id] = lesson
   endfor
-  for drill in s:Custom(techniques)
-    if has_key(drill, 'technique')
-      let drill.skill = by_id[drill.technique].skill
-      call add(by_id[drill.technique].drills, drill)
+  for drill in s:Custom(lessons)
+    if has_key(drill, 'lesson')
+      let drill.section = by_id[drill.lesson].section
+      call add(by_id[drill.lesson].drills, drill)
     else
-      call add(techniques, {'id': drill.id, 'title': drill.id, 'keys': [],
-            \ 'skill': 'custom', 'custom': 1, 'drills': [drill]})
+      call add(lessons, {'id': drill.id, 'title': drill.id, 'keys': [],
+            \ 'section': 'custom', 'custom': 1, 'drills': [drill]})
     endif
   endfor
-  return techniques
+  return lessons
 endfunction
 
-function! s:Lessons() abort
+function! s:Read() abort
   let lessons = []
   for section in s:Outline()
     for id in section.lessons
       let lesson = vim_dojo#drills#Lesson(s:root . '/lessons/' . id . '.md')
-      let lesson.skill = section.id
+      let lesson.section = section.id
       for drill in lesson.drills
-        call extend(drill, {'skill': section.id, 'technique': id})
+        call extend(drill, {'section': section.id, 'lesson': id})
       endfor
       call add(lessons, lesson)
     endfor
@@ -181,7 +181,7 @@ function! vim_dojo#drills#Draw(lesson, snippet, from, tried) abort
       let pick[index] = place.submatches[index - 1]
     endfor
   endif
-  let task = {'id': a:lesson.id . '-generated', 'technique': a:lesson.id, 'skill': a:lesson.skill,
+  let task = {'id': a:lesson.id . '-generated', 'lesson': a:lesson.id, 'section': a:lesson.section,
         \ 'ft': a:snippet.ft, 'snippet': a:snippet.name, 'lines': a:snippet.lines, 'moves': moves,
         \ 'solution': s:Fill(generator.keys, pick),
         \ 'goal': s:Fill(get(generator, 'goal', 'Move onto the highlighted character.'), pick)}
@@ -267,16 +267,16 @@ function! s:Code(name) abort
   return s:codes[a:name]
 endfunction
 
-function! s:Custom(techniques) abort
+function! s:Custom(lessons) abort
   let dir = expand(get(g:, 'vim_dojo_drill_dir', empty($VIM_DOJO_DRILL_DIR) ? '~/.vim/vim-dojo/drills' : $VIM_DOJO_DRILL_DIR))
   if !isdirectory(dir)
     return []
   endif
   let ids = []
   let known = {}
-  for technique in a:techniques
-    let known[technique.id] = technique.skill
-    call extend(ids, map(copy(technique.drills), {_, drill -> drill.id}))
+  for lesson in a:lessons
+    let known[lesson.id] = lesson.section
+    call extend(ids, map(copy(lesson.drills), {_, drill -> drill.id}))
   endfor
   let builtin = copy(ids)
   let drills = []
@@ -304,13 +304,6 @@ function! s:Custom(techniques) abort
       if get(task, 'ft', 'text') !~# '^\w\+$'
         throw 'Unknown ft'
       endif
-      " A technique that is no lesson's leaves the drill in Custom.
-      if has_key(task, 'technique')
-        let task.technique = get(s:renamed, task.technique, task.technique)
-        if !has_key(known, task.technique)
-          call remove(task, 'technique')
-        endif
-      endif
       for field in ['lines'] + (has_key(task, 'target') ? [] : ['expected'])
         if type(get(task, field)) != v:t_list || empty(task[field])
               \ || !empty(filter(copy(task[field]), {_, line -> type(line) != v:t_string || line =~# '[\r\n]'}))
@@ -321,12 +314,18 @@ function! s:Custom(techniques) abort
         throw 'Expected buffer must differ'
       endif
       " v2 files may name a skill, which no longer places them.
-      let clean = {'custom': 1, 'ft': 'text', 'skill': 'custom'}
-      for field in ['id', 'goal', 'keys', 'lines', 'expected', 'ft', 'start', 'technique', 'solution', 'target']
+      let clean = {'custom': 1, 'ft': 'text', 'section': 'custom'}
+      for field in ['id', 'goal', 'keys', 'lines', 'expected', 'ft', 'start', 'solution', 'target']
         if has_key(task, field)
           let clean[field] = task[field]
         endif
       endfor
+      " A file names its lesson as `technique`; one that is no lesson's leaves
+      " the drill in Custom.
+      let named = get(s:renamed, get(task, 'technique', ''), get(task, 'technique', ''))
+      if has_key(known, named)
+        let clean.lesson = named
+      endif
       if !has_key(clean, 'keys')
         let clean.keys = clean.solution
       endif

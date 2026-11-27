@@ -18,7 +18,7 @@ autocmd CursorHold * let g:held = 1
 let g:vim_dojo_state_dir = '$tmp/state'
 let g:vim_dojo_demo_delay = 0
 function! Goal(drill) abort
-  call vim_dojo#Start({'kind': 'free', 'technique': '', 'goals': [a:drill]})
+  call vim_dojo#Start({'kind': 'free', 'lesson': '', 'goals': [a:drill]})
 endfunction
 set runtimepath^=$root
 EOF
