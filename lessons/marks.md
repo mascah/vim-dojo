@@ -1,7 +1,7 @@
 # Marks
 
 `m` followed by a letter sets a mark at the cursor: `ma` marks the spot as
-`a`. Later, `'a` jumps to the start of that line and `` `a `` to the exact
+`a`. Later, `'a` jumps to that line's first non-blank and `` `a `` to the exact
 spot. A mark is also a motion, so `d'a` deletes every line from the mark to
 the cursor.
 
@@ -39,7 +39,7 @@ when the line is enough and `` ` `` when the column matters.
 
 Setting a mark and then reaching for it with a search or scrolling anyway.
 The mark is there to be used. Note that `'a` and `` `a `` are different keys
-with different targets: the line's first character, or the very spot you
+with different targets: the line's first non-blank, or the very spot you
 marked.
 
 ```json

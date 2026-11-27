@@ -182,12 +182,14 @@ function! vim_dojo#progress#Focus(technique) abort
 endfunction
 
 " A section's review: twenty goals drawn evenly from its lessons, shuffled.
+" Each lesson's share is the start of its round, so its scenarios come least
+" recently tried first and none twice before all have come.
 function! vim_dojo#progress#Section(section, techniques) abort
   let lessons = filter(copy(a:techniques), {_, t -> t.skill ==# a:section})
   let goals = []
   for index in range(len(lessons))
     let share = s:section_length / len(lessons) + (index < s:section_length % len(lessons))
-    call extend(goals, s:Shuffle(vim_dojo#progress#Round(lessons[index], 'section').goals)[: share - 1])
+    call extend(goals, vim_dojo#progress#Round(lessons[index], 'section').goals[: share - 1])
   endfor
   let name = get(filter(vim_dojo#drills#Skills(), {_, s -> s[0] ==# a:section}), 0, ['', a:section])[1]
   return {'kind': 'section', 'technique': '', 'section': a:section, 'name': name, 'goals': s:Shuffle(goals)}

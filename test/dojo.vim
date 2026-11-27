@@ -518,6 +518,16 @@ try
     endif
   endfor
   call assert_equal({'modes': 5, 'hjkl': 5, 'word': 5, 'insert': 5}, s:drawn)
+  " A lesson on four scenarios brings each once before any comes again.
+  for s:attempt in range(5)
+    let s:ids = {}
+    for s:goal in vim_dojo#progress#Section('repeat', vim_dojo#drills#Techniques()).goals
+      let s:ids[s:goal.technique] = add(get(s:ids, s:goal.technique, []), s:goal.id)
+    endfor
+    for [s:id, s:list] in items(s:ids)
+      call assert_equal(4, len(uniq(sort(copy(s:list)))), s:id . ' ' . string(s:list))
+    endfor
+  endfor
   call assert_match('16 of 20 clean.*passed', s:Panel())
   call assert_match('3 lessons placed as known', s:Panel())
   DojoClose
