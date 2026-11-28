@@ -457,21 +457,28 @@ func (m *model) toast(w int) string {
 	if r.left || r.failed {
 		return lipgloss.NewStyle().MaxWidth(w).Render(" " + tag + " " + t.fg(t.text).Render(r.note))
 	}
-	head := " " + tag + " " + lipgloss.NewStyle().Bold(true).Foreground(t.text).Render(r.title) +
-		t.fg(t.muted).Render(fmt.Sprintf("  ·  %d of %d clean", r.clean, r.goals))
+	named := func(title string) string {
+		return " " + tag + " " + lipgloss.NewStyle().Bold(true).Foreground(t.text).Render(title) +
+			t.fg(t.muted).Render(fmt.Sprintf("  ·  %d of %d clean", r.clean, r.goals))
+	}
+	head := named(r.title)
 	clock := t.fg(t.muted).Render(fmt.Sprintf("  ·  %d:%02d", r.seconds/60, r.seconds%60))
 	bar := "  " + t.bar(12, m.grow(float64(r.clean)/float64(max(1, r.goals))), t.shaky, t.solid)
 	note := ""
 	if r.note != "" {
 		note = t.fg(t.text).Render("  " + r.note)
 	}
-	// The note is what the line is for: the bar goes first, then the time.
+	// The note is what the line is for: the bar goes first, then the time,
+	// then the end of the title.
 	line := head + clock + bar + note
 	for _, try := range []string{head + clock + note, head + note} {
 		if lipgloss.Width(line) <= w {
 			break
 		}
 		line = try
+	}
+	if over := lipgloss.Width(line) - w; over > 0 {
+		line = named(truncate(r.title, max(2, len([]rune(r.title))-over))) + note
 	}
 	return lipgloss.NewStyle().MaxWidth(w).Render(line)
 }
@@ -860,6 +867,8 @@ func (m *model) dialogView() string {
 		t.fg(t.muted).Render("Goals across lessons, keys hidden, no box moves."), "",
 		t.fg(t.muted).Render("Length  ") + strings.Join(options, " "),
 		t.fg(t.muted).Render("Over    ") + t.fg(t.text).Render(truncate(m.over(), width-14)), ""}
+	// A narrow dialog wraps the lines above, so they are measured as drawn.
+	above := lipgloss.Height(lipgloss.NewStyle().Width(width - 6).Render(strings.Join(lines, "\n")))
 	var rows []string
 	for i, s := range m.sections() {
 		learned, all := 0, m.catalog.InSection(s.ID)
@@ -873,10 +882,10 @@ func (m *model) dialogView() string {
 			box, style = "[x]", t.fg(t.accent).Bold(true)
 		}
 		rows = append(rows, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), 24},
-			cell{fmt.Sprintf("%d of %d learned", learned, len(all)), t.fg(t.muted), 0}))
+			cell{fmt.Sprintf("%d of %d learned", learned, len(all)), t.fg(t.muted), max(1, width-36)}))
 	}
-	// Border, padding, the six lines above and the two below: the rest is for sections.
-	lines = append(lines, window(rows, m.mixCursor, max(1, m.height-12))...)
+	// Border, padding, the lines above and the two below: the rest is for sections.
+	lines = append(lines, window(rows, m.mixCursor, max(1, m.height-6-above))...)
 	m.help.SetWidth(width - 6)
 	lines = append(lines, "", m.help.ShortHelpView(bindings{named(keys.Open, "enter", "start"), keys.Toggle,
 		named(keys.Left, "h/l", "length"), keys.Back}))

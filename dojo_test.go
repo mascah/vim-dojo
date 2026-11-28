@@ -379,6 +379,13 @@ func TestFinish(t *testing.T) {
 	if view := shown(m); !strings.Contains(view, "8 of 10 clean  now shaky · due tomorrow") {
 		t.Errorf("note cut at 80 columns:\n%s", view)
 	}
+	// A long title gives way to the note too.
+	last := m.last
+	m.last = &result{title: "Review  search as a motion", note: "back to box 1 · due in 2 days", clean: 6, goals: 10, seconds: 60}
+	if view := shown(m); !strings.Contains(view, "back to box 1 · due in 2 days") {
+		t.Errorf("note cut by a long title:\n%s", view)
+	}
+	m.last = last
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.Update(press("j"))
 	m.Update(press("j"))
@@ -478,14 +485,16 @@ func TestMixedShell(t *testing.T) {
 	if view := shown(m); !strings.Contains(view, "[x] Entering Insert") || !strings.Contains(view, "Entering Insert (4 lessons)") {
 		t.Fatalf("after choosing:\n%s", view)
 	}
-	// A short terminal keeps the chosen section's row in the dialog.
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 15})
+	// A short or narrow terminal keeps the chosen section's row in the dialog.
 	for range 20 {
 		m.Update(press("j"))
 	}
 	last := m.sections()[len(m.sections())-1].Name
-	if view := shown(m); !regexp.MustCompile(`› \[ \] ` + last).MatchString(view) {
-		t.Fatalf("cursor on %s out of view:\n%s", last, view)
+	for _, size := range [][2]int{{80, 15}, {50, 24}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		if view := shown(m); !regexp.MustCompile(`› \[ \] ` + last).MatchString(view) {
+			t.Fatalf("%v: cursor on %s out of view:\n%s", size, last, view)
+		}
 	}
 	for range 20 {
 		m.Update(press("k"))
