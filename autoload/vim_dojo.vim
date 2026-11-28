@@ -1003,7 +1003,7 @@ function! s:Summary() abort
   if !empty(advice)
     call extend(lines, [''] + advice[0])
   endif
-  return lines + ['', 'Enter / :DojoNext  Back to the map']
+  return lines + ['', 'Enter / :DojoNext  Back to the dashboard']
 endfunction
 
 function! s:Render() abort
