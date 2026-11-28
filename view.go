@@ -83,6 +83,10 @@ func (m *model) header(w int, right string, crumbs ...string) string {
 		if m.inbox > 0 {
 			right = t.fg(t.text).Render(fmt.Sprintf("%d in inbox", m.inbox)) +
 				t.fg(t.muted).Render(" · "+tilde(m.inboxDir)+" ")
+			// On a narrow terminal the path goes; the count is what matters.
+			if lipgloss.Width(left+right) >= w {
+				right = t.fg(t.text).Render(fmt.Sprintf("%d in inbox ", m.inbox))
+			}
 		}
 		// The inbox has to show; the tagline gives way to it.
 		if tagline := "  practice in your own Vim"; lipgloss.Width(left+tagline+right) < w {
@@ -100,12 +104,13 @@ func tilde(path string) string {
 }
 
 func (m *model) footer(w int, b bindings, right string) string {
-	if m.help.ShowAll {
+	// Only the dashboard leaves room for the full help; other screens keep one line.
+	if m.help.ShowAll && m.screen == homeScreen {
 		m.help.SetWidth(w - 2)
 		return lipgloss.NewStyle().PaddingLeft(1).Render(m.help.View(b))
 	}
 	m.help.SetWidth(w - lipgloss.Width(right) - 3)
-	return between(w, " "+m.help.View(b), right+" ")
+	return between(w, " "+m.help.ShortHelpView(b), right+" ")
 }
 
 func (m *model) legend() string {
@@ -452,11 +457,21 @@ func (m *model) toast(w int) string {
 	if r.left || r.failed {
 		return lipgloss.NewStyle().MaxWidth(w).Render(" " + tag + " " + t.fg(t.text).Render(r.note))
 	}
-	line := " " + tag + " " + lipgloss.NewStyle().Bold(true).Foreground(t.text).Render(r.title) +
-		t.fg(t.muted).Render(fmt.Sprintf("  ·  %d of %d clean  ·  %d:%02d  ", r.clean, r.goals, r.seconds/60, r.seconds%60)) +
-		t.bar(12, m.grow(float64(r.clean)/float64(max(1, r.goals))), t.shaky, t.solid)
+	head := " " + tag + " " + lipgloss.NewStyle().Bold(true).Foreground(t.text).Render(r.title) +
+		t.fg(t.muted).Render(fmt.Sprintf("  ·  %d of %d clean", r.clean, r.goals))
+	clock := t.fg(t.muted).Render(fmt.Sprintf("  ·  %d:%02d", r.seconds/60, r.seconds%60))
+	bar := "  " + t.bar(12, m.grow(float64(r.clean)/float64(max(1, r.goals))), t.shaky, t.solid)
+	note := ""
 	if r.note != "" {
-		line += t.fg(t.text).Render("  " + r.note)
+		note = t.fg(t.text).Render("  " + r.note)
+	}
+	// The note is what the line is for: the bar goes first, then the time.
+	line := head + clock + bar + note
+	for _, try := range []string{head + clock + note, head + note} {
+		if lipgloss.Width(line) <= w {
+			break
+		}
+		line = try
 	}
 	return lipgloss.NewStyle().MaxWidth(w).Render(line)
 }
@@ -845,6 +860,7 @@ func (m *model) dialogView() string {
 		t.fg(t.muted).Render("Goals across lessons, keys hidden, no box moves."), "",
 		t.fg(t.muted).Render("Length  ") + strings.Join(options, " "),
 		t.fg(t.muted).Render("Over    ") + t.fg(t.text).Render(truncate(m.over(), width-14)), ""}
+	var rows []string
 	for i, s := range m.sections() {
 		learned, all := 0, m.catalog.InSection(s.ID)
 		for _, l := range all {
@@ -856,15 +872,14 @@ func (m *model) dialogView() string {
 		if m.chosen[s.ID] {
 			box, style = "[x]", t.fg(t.accent).Bold(true)
 		}
-		lines = append(lines, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), 24},
+		rows = append(rows, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), 24},
 			cell{fmt.Sprintf("%d of %d learned", learned, len(all)), t.fg(t.muted), 0}))
 	}
+	// Border, padding, the six lines above and the two below: the rest is for sections.
+	lines = append(lines, window(rows, m.mixCursor, max(1, m.height-12))...)
 	m.help.SetWidth(width - 6)
-	showAll := m.help.ShowAll
-	m.help.ShowAll = false
-	lines = append(lines, "", m.help.View(bindings{named(keys.Open, "enter", "start"), keys.Toggle,
+	lines = append(lines, "", m.help.ShortHelpView(bindings{named(keys.Open, "enter", "start"), keys.Toggle,
 		named(keys.Left, "h/l", "length"), keys.Back}))
-	m.help.ShowAll = showAll
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(t.accent, t.key).
 		Padding(1, 2).Width(width).Render(strings.Join(lines, "\n"))
 }

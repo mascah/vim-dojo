@@ -374,6 +374,12 @@ func TestFinish(t *testing.T) {
 			t.Errorf("lacks %q:\n%s", text, view)
 		}
 	}
+	// At 80 columns the bar and the time give way so the note still shows.
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if view := shown(m); !strings.Contains(view, "8 of 10 clean  now shaky · due tomorrow") {
+		t.Errorf("note cut at 80 columns:\n%s", view)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.Update(press("j"))
 	m.Update(press("j"))
 	if view := shown(m); !regexp.MustCompile(`◐ modes and Esc +shaky.*due tomorrow`).MatchString(view) {
@@ -472,6 +478,20 @@ func TestMixedShell(t *testing.T) {
 	if view := shown(m); !strings.Contains(view, "[x] Entering Insert") || !strings.Contains(view, "Entering Insert (4 lessons)") {
 		t.Fatalf("after choosing:\n%s", view)
 	}
+	// A short terminal keeps the chosen section's row in the dialog.
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 15})
+	for range 20 {
+		m.Update(press("j"))
+	}
+	last := m.sections()[len(m.sections())-1].Name
+	if view := shown(m); !regexp.MustCompile(`› \[ \] ` + last).MatchString(view) {
+		t.Fatalf("cursor on %s out of view:\n%s", last, view)
+	}
+	for range 20 {
+		m.Update(press("k"))
+	}
+	m.Update(press("j"))
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	_, cmd := m.Update(press("enter"))
 	var r Request
 	data, err := os.ReadFile(filepath.Join(dir, "round.json"))
