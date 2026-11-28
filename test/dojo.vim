@@ -693,18 +693,21 @@ try
   endfor
 
   " hop: a cursor lesson keeps the text and starts each goal where the last
-  " one's target was.
+  " one's target was. When no goal fits there, which happens about once in 300
+  " goals, the next starts somewhere fresh, so one fresh start is allowed.
   call vim_dojo#Start({'kind': 'free', 'lesson': 'word', 'goals': repeat([{'generated': 1}], 10)})
   let s:tick = b:changedtick
   let s:previous = vim_dojo#Task()
+  let s:hops = 0
   for s:goal in range(9)
     call s:Solve()
     let s:task = vim_dojo#Task()
-    call assert_equal(s:previous.target, s:task.position)
+    let s:hops += s:previous.target == s:task.position
     call assert_equal(s:task.position, [line('.'), col('.')])
     call assert_equal(s:tick, b:changedtick)
     let s:previous = s:task
   endfor
+  call assert_true(s:hops >= 8, s:hops . ' of 9 goals started on the last target')
   DojoClose
 
   " generated-goal: a quotes goal highlights one string in a snippet of 20
