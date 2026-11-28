@@ -576,3 +576,35 @@ func TestSizes(t *testing.T) {
 		}
 	}
 }
+
+// TestUnpack writes the built-in files once, leaves them while the stamp
+// matches, and replaces them for another build's.
+func TestUnpack(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "vim-dojo")
+	if _, err := unpack(files, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir, filepath.Join(t.TempDir(), "drills")); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"autoload/vim_dojo.vim", "plugin/vim_dojo.vim", "_snippets/cli.go"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Error(err)
+		}
+	}
+	marker := filepath.Join(dir, "marker")
+	os.WriteFile(marker, nil, 0o644)
+	if _, err := unpack(files, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("unpacked again with the stamp matching")
+	}
+	os.WriteFile(filepath.Join(dir, ".stamp"), []byte("another build\n"), 0o644)
+	if _, err := unpack(files, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("kept another build's files")
+	}
+}

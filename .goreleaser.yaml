@@ -27,14 +27,9 @@ archives:
     # for install.sh.
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
-    # dojo reads the lessons next to it and hands Vim this folder as its
-    # runtime, so the archive is the whole plugin, and a Vim package too.
+    # The lessons and the Vim runtime are built into dojo.
     files:
       - README.md
-      - lessons
-      - snippets
-      - autoload
-      - plugin
 
 checksum:
   name_template: "checksums.txt"

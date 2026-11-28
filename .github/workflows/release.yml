@@ -44,16 +44,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Fails the release loudly if install.sh cannot install what was
-      # uploaded, lessons included.
+      # Fails the release loudly if install.sh cannot install what was uploaded.
       - name: Install the release and run it
         if: ${{ steps.release.outputs.release_created }}
         env:
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |
           dir=$(mktemp -d)
-          VIM_DOJO_INSTALL_DIR="$dir/bin" XDG_DATA_HOME="$dir/share" sh install.sh "$TAG"
-          got=$("$dir/bin/dojo" version)
+          VIM_DOJO_INSTALL_DIR="$dir" sh install.sh "$TAG"
+          got=$("$dir/dojo" version)
           echo "$got"
           test "$got" = "dojo ${TAG#v}"
-          test -f "$dir/share/vim-dojo/lessons/outline.json"

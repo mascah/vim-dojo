@@ -1,13 +1,11 @@
 #!/bin/sh
-# Installs Vim Dojo from a GitHub release: its files in
-# ${XDG_DATA_HOME:-~/.local/share}/vim-dojo, linked as dojo from ~/.local/bin.
+# Installs dojo from a GitHub release.
 #   curl -fsSL https://raw.githubusercontent.com/mascah/vim-dojo/main/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/mascah/vim-dojo/main/install.sh | sh -s -- v0.1.0
 set -eu
 
 releases=https://github.com/mascah/vim-dojo/releases
 dir=${VIM_DOJO_INSTALL_DIR:-$HOME/.local/bin}
-share=${XDG_DATA_HOME:-$HOME/.local/share}/vim-dojo
 
 fail() {
 	echo "vim-dojo: $1" >&2
@@ -57,15 +55,10 @@ if [ -z "$want" ] || [ "$want" != "$got" ]; then
 	fail "$archive does not match checksums.txt; nothing was installed."
 fi
 
-mkdir "$tmp/vim-dojo"
-tar -xzf "$tmp/$archive" -C "$tmp/vim-dojo"
-# dojo finds the lessons next to itself, following the link. The learner's
-# records live in the state directory, so replacing these files keeps them.
-mkdir -p "$(dirname "$share")" "$dir"
-rm -rf "$share"
-mv "$tmp/vim-dojo" "$share"
-ln -sf "$share/dojo" "$dir/dojo"
-echo "Installed Vim Dojo in $share, and dojo in $dir."
+tar -xzf "$tmp/$archive" -C "$tmp" dojo
+mkdir -p "$dir"
+mv "$tmp/dojo" "$dir/dojo"
+echo "Installed dojo in $dir."
 
 case ":$PATH:" in
 *":$dir:"*) ;;
