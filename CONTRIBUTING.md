@@ -46,9 +46,11 @@ release-please keeps a release pull request open on `main`. The next version
 comes from the commit titles since the last release: `fix` bumps the patch
 version, `feat` the minor, and a breaking change as above. Merging the release
 pull request tags the release, writes `CHANGELOG.md` and creates the GitHub
-Release; GoReleaser, in the same workflow, attaches an archive for each system
-to it, holding `dojo` with the lessons, snippets and Vim runtime it reads.
-`install.sh` installs one, and the workflow fails if it cannot.
+Release; GoReleaser, in the same workflow, attaches the binaries to it, and
+the workflow fails if `install.sh` cannot install one. The lessons and the Vim
+runtime are embedded in `dojo`, which writes them to the data directory when
+it does not sit next to `lessons/`. `_snippets/` starts with `_` so that the
+go tool skips its Go files.
 
 The release pull request is opened with the default token, so CI does not run
 on it. Nothing is versioned by hand. For

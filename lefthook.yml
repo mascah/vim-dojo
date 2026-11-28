@@ -1,5 +1,5 @@
 # The Vim suite takes most of a minute, so tests stay out of this hook; run
-# `just check` before committing instead. snippets/ is drill text, so gofmt
+# `just check` before committing instead. _snippets/ is drill text, so gofmt
 # leaves it alone.
 pre-commit:
   parallel: true
@@ -7,7 +7,7 @@ pre-commit:
     - name: gofmt
       glob: "*.go"
       exclude:
-        - "snippets/**"
+        - "_snippets/**"
       run: gofmt -w {staged_files}
       stage_fixed: true
     - name: vet

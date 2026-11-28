@@ -119,7 +119,7 @@ endfunction
 " its filetype taken from the extension.
 function! vim_dojo#drills#Snippets() abort
   if empty(s:snippets)
-    let dir = s:root . '/snippets'
+    let dir = s:root . '/_snippets'
     let names = readdir(dir, {name -> has_key(s:filetypes, fnamemodify(name, ':e'))})
     let s:snippets = map(names, {_, name -> {'name': name,
           \ 'ft': s:filetypes[fnamemodify(name, ':e')], 'lines': readfile(dir . '/' . name)}})

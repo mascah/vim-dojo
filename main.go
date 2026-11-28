@@ -4,13 +4,17 @@
 package main
 
 import (
+	"crypto/sha256"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,11 +27,26 @@ import (
 )
 
 // version is set by the release build with -ldflags -X.
-var version = "dev"
+var version string
+
+// files are the lessons and the Vim runtime, built in so that dojo is one
+// file. The go tool skips directories starting with _, so the Go snippets
+// stay out of the build.
+//
+//go:embed lessons autoload plugin _snippets
+var files embed.FS
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "version" {
-		fmt.Println("dojo", version)
+		v := version
+		// go install of a tagged module records the tag here instead.
+		if info, ok := debug.ReadBuildInfo(); v == "" && ok {
+			v = strings.TrimPrefix(info.Main.Version, "v")
+		}
+		if v == "" || v == "(devel)" {
+			v = "dev"
+		}
+		fmt.Println("dojo", v)
 		return
 	}
 	root, err := pluginRoot()
@@ -43,8 +62,9 @@ func main() {
 	}
 }
 
-// pluginRoot is VIM_DOJO_ROOT, or the directory the dojo binary sits in,
-// following a symlink to it.
+// pluginRoot is VIM_DOJO_ROOT, the directory the dojo binary sits in when
+// the lessons are there, as in a checkout, or else the built-in files,
+// written out to the data directory, since Vim reads its runtime from disk.
 func pluginRoot() (string, error) {
 	if root := os.Getenv("VIM_DOJO_ROOT"); root != "" {
 		return root, nil
@@ -57,10 +77,48 @@ func pluginRoot() (string, error) {
 		return "", err
 	}
 	root := filepath.Dir(exe)
-	if _, err := os.Stat(filepath.Join(root, "lessons", "outline.json")); err != nil {
-		return "", fmt.Errorf("no lessons next to %s; set VIM_DOJO_ROOT to the vim-dojo checkout", exe)
+	if _, err := os.Stat(filepath.Join(root, "lessons", "outline.json")); err == nil {
+		return root, nil
 	}
-	return root, nil
+	home := os.Getenv("XDG_DATA_HOME")
+	if home == "" {
+		home = filepath.Join(os.Getenv("HOME"), ".local", "share")
+	}
+	return unpack(files, filepath.Join(home, "vim-dojo"))
+}
+
+// unpack writes fsys to dir unless dir holds these files already, as its
+// stamp, a hash of them, says. They are written beside dir and swapped in,
+// so a dojo stopped halfway leaves the old files.
+func unpack(fsys fs.FS, dir string) (string, error) {
+	sum := sha256.New()
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(fsys, path)
+		fmt.Fprintf(sum, "%s %d\n", path, len(data))
+		sum.Write(data)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	stamp := fmt.Sprintf("%x\n", sum.Sum(nil))
+	if old, _ := os.ReadFile(filepath.Join(dir, ".stamp")); string(old) == stamp {
+		return dir, nil
+	}
+	next := dir + ".new"
+	os.RemoveAll(next)
+	err = os.CopyFS(next, fsys)
+	if err == nil {
+		err = os.WriteFile(filepath.Join(next, ".stamp"), []byte(stamp), 0o644)
+	}
+	if err == nil {
+		os.RemoveAll(dir)
+		err = os.Rename(next, dir)
+	}
+	return dir, err
 }
 
 func stateDir() string {
