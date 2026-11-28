@@ -22,7 +22,14 @@ import (
 	"github.com/charmbracelet/harmonica"
 )
 
+// version is set by the release build with -ldflags -X.
+var version = "dev"
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "version" {
+		fmt.Println("dojo", version)
+		return
+	}
 	root, err := pluginRoot()
 	if err == nil {
 		var c *Catalog

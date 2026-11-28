@@ -818,6 +818,8 @@ finally
 endtry
 
 if !empty(v:errors)
+  " -es shows messages only with 'verbose' set, and then on stderr.
+  set verbose=1
   for s:error in v:errors
     echomsg s:error
   endfor
