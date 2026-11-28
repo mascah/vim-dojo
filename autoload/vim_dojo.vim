@@ -324,6 +324,7 @@ function! s:Keep(task, seen, walks) abort
     let kept = lines ==# expected && type(get(a:task, 'target')) == v:t_list
           \ && index(s:Isolated({-> map(range(1, a:task.par - 1),
           \   {_, length -> s:Play(a:task.tokens[: length - 1])[1]})}), a:task.target) < 0
+          \ && s:Steady(a:task)
   else
     let [lnum, col, text] = a:task.place
     let old = lines[lnum - 1]
@@ -342,6 +343,24 @@ function! s:Keep(task, seen, walks) abort
   endif
   let a:seen[key] = 1
   return 1
+endfunction
+
+" Whether a cursor goal's target stays put when the window is a little
+" taller or shorter, as it is once the panel changes. From a wrapped line,
+" Ctrl-D lands on a line that depends on the window's height.
+function! s:Steady(task) abort
+  let height = winheight(0)
+  try
+    for other in [height - 2, height + 2]
+      execute 'resize' other
+      if s:Isolated({-> s:Play(a:task.tokens)})[1] != a:task.target
+        return 0
+      endif
+    endfor
+    return 1
+  finally
+    execute 'resize' height
+  endtry
 endfunction
 
 " Whether h j k l and x alone could do a goal in `limit` keys. x only
