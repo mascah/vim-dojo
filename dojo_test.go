@@ -490,7 +490,7 @@ func TestMixedShell(t *testing.T) {
 		m.Update(press("j"))
 	}
 	last := m.sections()[len(m.sections())-1].Name
-	for _, size := range [][2]int{{80, 15}, {50, 24}} {
+	for _, size := range [][2]int{{80, 15}, {50, 24}, {40, 24}} {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		if view := shown(m); !regexp.MustCompile(`› \[ \] ` + last).MatchString(view) {
 			t.Fatalf("%v: cursor on %s out of view:\n%s", size, last, view)

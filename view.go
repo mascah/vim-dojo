@@ -881,7 +881,7 @@ func (m *model) dialogView() string {
 		if m.chosen[s.ID] {
 			box, style = "[x]", t.fg(t.accent).Bold(true)
 		}
-		rows = append(rows, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), 24},
+		rows = append(rows, t.row(width-6, i == m.mixCursor, true, cell{box, style, 4}, cell{s.Name, t.fg(t.text), min(24, width-13)},
 			cell{fmt.Sprintf("%d of %d learned", learned, len(all)), t.fg(t.muted), max(1, width-36)}))
 	}
 	// Border, padding, the lines above and the two below: the rest is for sections.
