@@ -513,3 +513,71 @@ func Inbox(dir string) (string, int) {
 	names, _ := filepath.Glob(filepath.Join(inbox, "*.json"))
 	return inbox, len(names)
 }
+
+// What the dashboard counts from the records.
+
+// Active is the goals finished on each day.
+func Active(records []Record) map[int64]int {
+	days := map[int64]int{}
+	for _, r := range records {
+		switch r.Result {
+		case "clean", "unclean", "skipped":
+			days[Day(r.Time)]++
+		}
+	}
+	return days
+}
+
+// Streak is the days in a row with practice, up to today, or up to yesterday
+// while today has none yet.
+func Streak(days map[int64]int, today int64) int {
+	if days[today] == 0 {
+		today--
+	}
+	n := 0
+	for ; days[today] > 0; today-- {
+		n++
+	}
+	return n
+}
+
+// Totals sums rounds.
+type Totals struct {
+	Rounds, Clean, Goals int
+	Seconds              int64
+}
+
+// Since sums the rounds finished on or after a day.
+func Since(records []Record, day int64) Totals {
+	var t Totals
+	for _, r := range records {
+		if r.Result == "round" && Day(r.Time) >= day {
+			t.Rounds++
+			t.Clean += r.Clean
+			t.Goals += r.Goals
+			t.Seconds += r.Seconds
+		}
+	}
+	return t
+}
+
+// Forecast is how many lessons fall due on each of the next n days, today
+// first. An overdue lesson counts as today.
+func Forecast(items map[string]*Item, today int64, n int) []int {
+	days := make([]int, n)
+	for _, item := range items {
+		if at := max(item.Due-today, 0); item.Box > 0 && at < int64(n) {
+			days[at]++
+		}
+	}
+	return days
+}
+
+// Boxes counts the lessons in each box, new ones in box 0.
+func Boxes(items map[string]*Item) [6]int {
+	var boxes [6]int
+	for _, item := range items {
+		boxes[item.Box]++
+	}
+	return boxes
+}

@@ -1,11 +1,12 @@
-// Command dojo is Vim Dojo's shell: the map, lesson pages, and stats. A
-// round runs in the learner's own Vim, which the shell starts on a request
+// Command dojo is Vim Dojo's shell: the dashboard, lesson pages, and stats.
+// A round runs in the learner's own Vim, which the shell starts on a request
 // file in the state directory and reads the records of when Vim exits.
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,20 +14,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	symbols = []string{"○", "◐", "●"}
-	words   = []string{"new", "shaky", "solid"}
-
-	bold     = lipgloss.NewStyle().Bold(true)
-	faint    = lipgloss.NewStyle().Faint(true)
-	selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-	levels   = []lipgloss.Style{faint, lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("2"))}
-	code = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/harmonica"
 )
 
 func main() {
@@ -34,9 +27,7 @@ func main() {
 	if err == nil {
 		var c *Catalog
 		if c, err = Load(root, drillDir()); err == nil {
-			m := &model{catalog: c, state: stateDir()}
-			m.refresh()
-			_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+			_, err = tea.NewProgram(newModel(c, stateDir())).Run()
 		}
 	}
 	if err != nil {
@@ -83,27 +74,30 @@ func drillDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".vim", "vim-dojo", "drills")
 }
 
-type view int
+type screen int
 
 const (
-	mapView view = iota
-	pageView
-	statsView
-	mixedView
+	homeScreen screen = iota
+	pageScreen
+	statsScreen
 )
 
 // The lengths a mixed round can have: a number of goals, or minutes.
 var lengths = []struct {
 	label        string
 	count, limit int
-}{{"10 goals", 10, 0}, {"20 goals", 20, 0}, {"40 goals", 40, 0},
-	{"2 minutes", 0, 120}, {"5 minutes", 0, 300}, {"10 minutes", 0, 600}}
+}{{"10", 10, 0}, {"20", 20, 0}, {"40", 40, 0}, {"2", 0, 120}, {"5", 0, 300}, {"10", 0, 600}}
 
 const defaultLength = 1
 
-// row is one line of the map. Rows with a kind can be selected.
-type row struct {
-	text, kind, id string
+// result is how a round went, for the line above the footer and the session
+// pane. A round that did not end has its sentence in note.
+type result struct {
+	title, note          string
+	kind                 string
+	clean, goals         int
+	seconds              int64
+	passed, left, failed bool
 }
 
 type model struct {
@@ -111,54 +105,49 @@ type model struct {
 	state         string
 	records       []Record
 	items         map[string]*Item
-	rows          []row
-	cursor        int
-	offset        int
+	inboxDir      string
+	inbox         int
+	th            theme
+	help          help.Model
 	width, height int
-	view          view
-	scroll        int // the page's or stats' first line
-	page          []string
+	screen        screen
+	left, right   int  // the row in the practice pane and in the detail pane
+	inDetail      bool // the detail pane has the focus
+	dialog        bool // mixed practice's setup is open
+	page, stats   viewport.Model
 	pending       Planned // the round a page starts
 	fromSession   bool
-	session       []Planned // the rest of today's session once it has started
-	sessionSize   int
-	banner        []string
+	session       []Planned // today's session once started
+	done          []result  // its finished rounds
+	last          *result
 	length        int             // the mixed round's, in lengths
 	chosen        map[string]bool // the sections a mixed round is over
 	mixCursor     int
+	spring        harmonica.Spring
+	pos, vel      float64 // bars grow from 0 to 1 when the dashboard appears
 }
 
-func (m *model) Init() tea.Cmd { return nil }
+func newModel(c *Catalog, state string) *model {
+	m := &model{catalog: c, state: state, th: newTheme(true), help: help.New(),
+		chosen: map[string]bool{}, length: defaultLength, spring: harmonica.NewSpring(harmonica.FPS(60), 7, 0.8)}
+	m.help.Styles = m.th.help()
+	m.refresh()
+	return m
+}
 
-// refresh rereads the records and redraws the map, keeping the cursor on
-// the row it was on, or on today's session to begin with.
+type frameMsg struct{}
+
+func frame() tea.Cmd {
+	return tea.Tick(time.Second/60, func(time.Time) tea.Msg { return frameMsg{} })
+}
+
+func (m *model) Init() tea.Cmd { return tea.Batch(tea.RequestBackgroundColor, frame()) }
+
+// refresh rereads the records and the inbox.
 func (m *model) refresh() {
-	var at row
-	if m.cursor < len(m.rows) {
-		at = m.rows[m.cursor]
-	}
 	m.records = Records(m.state)
 	m.items = State(m.catalog, m.records)
-	m.rows = m.mapRows()
-	m.cursor = m.first("session")
-	for i, r := range m.rows {
-		if at.kind != "" && at.kind != "session" && r.kind == at.kind && r.id == at.id {
-			m.cursor = i
-		}
-	}
-}
-
-func (m *model) first(kind string) int {
-	for i, r := range m.rows {
-		if r.kind == kind {
-			return i
-		}
-	}
-	return 0
-}
-
-func pad(text string, width int) string {
-	return text + strings.Repeat(" ", max(0, width-lipgloss.Width(text)))
+	m.inboxDir, m.inbox = Inbox(m.state)
 }
 
 func due(item *Item, today int64) string {
@@ -183,203 +172,162 @@ func (m *model) plan() []Planned {
 	return Plan(m.catalog, m.items, m.today())
 }
 
-func (m *model) mapRows() []row {
-	today := m.today()
-	dueCount, fresh := 0, true
-	for _, l := range m.catalog.Lessons {
-		if item := m.items[l.ID]; item.Box > 0 {
-			fresh = false
-			if item.Due <= today {
-				dueCount++
-			}
-		}
+// sections lists the sections of the path, Custom too when it has lessons.
+func (m *model) sections() []Section {
+	sections := m.catalog.Sections
+	if len(m.catalog.InSection("custom")) > 0 {
+		sections = append(sections[:len(sections):len(sections)], Section{ID: "custom", Name: "Custom"})
 	}
-	inboxDir, inbox := Inbox(m.state)
-	right := fmt.Sprintf("%d due today · %d in inbox", dueCount, inbox)
-	rows := []row{{text: pad("Vim Dojo", 78-lipgloss.Width(right)) + right}, {}}
-	if inbox > 0 {
-		rows = append(rows, row{text: "  Inbox notes are in " + tilde(inboxDir)})
-	}
-	if fresh {
-		rows = append(rows, row{text: "  New here? Pass a section's review to skip it, or press Enter to begin."})
-	}
-	if inbox > 0 || fresh {
-		rows = append(rows, row{})
-	}
-	label := "Start today's session"
-	if len(m.session) > 0 {
-		label = fmt.Sprintf("Next round, %d of %d", m.sessionSize-len(m.session)+1, m.sessionSize)
-	}
-	var parts []string
-	for _, kind := range []string{"review", "learn"} {
-		var titles []string
-		for _, p := range m.plan() {
-			if p.Kind == kind {
-				titles = append(titles, p.Lesson.Title)
-			}
-		}
-		if len(titles) > 0 {
-			parts = append(parts, kind+" "+strings.Join(titles, " / "))
-		}
-	}
-	rows = append(rows, row{text: truncate(fmt.Sprintf("  ▶ %-29s%s", label, strings.Join(parts, "  ·  ")), 80),
-		kind: "session"}, row{text: "  ▶ Mixed practice", kind: "mixed"}, row{})
-
-	for _, section := range append(m.catalog.Sections, Section{ID: "custom", Name: "Custom"}) {
-		lessons := m.catalog.InSection(section.ID)
-		if len(lessons) == 0 {
-			continue
-		}
-		bar, solid := "", 0
-		for _, l := range lessons {
-			level := m.items[l.ID].Level()
-			bar += symbols[level]
-			if level == 2 {
-				solid++
-			}
-		}
-		rows = append(rows, row{text: pad(section.Name, 22) + pad(bar, 11) +
-			fmt.Sprintf("%d of %d solid", solid, len(lessons))})
-		for _, l := range lessons {
-			item := m.items[l.ID]
-			text := "  " + symbols[item.Level()] + " " + pad(truncate(l.Title, 19), 20) +
-				pad(words[item.Level()], 10) + due(item, today)
-			rows = append(rows, row{text: strings.TrimRight(text, " "), kind: "lesson", id: l.ID})
-		}
-		if section.ID != "custom" {
-			rows = append(rows, row{text: "  ▷ Review " + section.Name, kind: "review", id: section.ID})
-		}
-	}
-	return rows
+	return sections
 }
 
-func truncate(text string, width int) string {
-	runes := []rune(text)
-	if len(runes) > width {
-		return string(runes[:width-1]) + "…"
+// detailRows is how many rows of the detail pane can be selected.
+func (m *model) detailRows() int {
+	if m.left < 2 {
+		return 0
 	}
-	return text
-}
-
-func tilde(path string) string {
-	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(path, home+"/") {
-		return "~" + path[len(home):]
+	s := m.sections()[m.left-2]
+	n := len(m.catalog.InSection(s.ID))
+	if s.ID != "custom" {
+		n++ // the section review
 	}
-	return path
+	return n
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.layout()
+	case tea.BackgroundColorMsg:
+		m.th = newTheme(msg.IsDark())
+		m.help.Styles = m.th.help()
+		m.layout()
+	case frameMsg:
+		m.pos, m.vel = m.spring.Update(m.pos, m.vel, 1)
+		if math.Abs(1-m.pos) > 0.002 || math.Abs(m.vel) > 0.002 {
+			return m, frame()
+		}
+		m.pos, m.vel = 1, 0
 	case roundDone:
 		m.finish(msg)
-	case tea.KeyMsg:
-		key := msg.String()
-		if key == "ctrl+c" {
+		return m, frame()
+	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
-		switch m.view {
-		case mapView:
-			return m, m.mapKey(key)
-		case pageView:
-			if key == "enter" {
-				m.view = mapView
-				return m, m.start(m.pending, m.fromSession)
-			}
-			m.scrollKey(key, len(m.pageLines()))
-		case statsView:
-			m.scrollKey(key, len(m.statsLines()))
-		case mixedView:
-			return m, m.mixedKey(key)
+		switch {
+		case m.dialog:
+			return m, m.dialogKey(msg)
+		case m.screen == pageScreen:
+			return m, m.pageKey(msg)
+		case m.screen == statsScreen:
+			return m, m.statsKey(msg)
+		default:
+			return m, m.homeKey(msg)
 		}
 	}
 	return m, nil
 }
 
-func (m *model) mapKey(key string) tea.Cmd {
-	switch key {
-	case "q", "esc":
+func (m *model) homeKey(msg tea.KeyPressMsg) tea.Cmd {
+	rows := 2 + len(m.sections())
+	switch {
+	case key.Matches(msg, keys.Quit):
 		return tea.Quit
-	case "j", "down":
-		m.move(1)
-	case "k", "up":
-		m.move(-1)
-	case "g", "home":
-		m.cursor = m.first("session")
-	case "G", "end":
-		m.cursor = len(m.rows)
-		m.move(-1)
-	case "s":
-		m.view, m.scroll = statsView, 0
-	case "enter":
-		r := m.rows[m.cursor]
-		switch r.kind {
-		case "session":
-			if len(m.session) == 0 {
-				m.session = m.plan()
-				m.sessionSize = len(m.session)
-			}
-			if len(m.session) > 0 {
-				return m.open(m.session[0], true)
-			}
-		case "lesson":
-			l := m.catalog.ByID[r.id]
-			kind := "review"
-			if m.items[l.ID].Box == 0 {
-				kind = "learn"
-			}
-			return m.open(Planned{Kind: kind, Lesson: l}, false)
-		case "review":
-			return m.start(Planned{Kind: "section", Section: r.id}, false)
-		case "mixed":
-			m.view = mixedView
-			if m.chosen == nil {
-				m.chosen, m.length = map[string]bool{}, defaultLength
-			}
-		}
+	case key.Matches(msg, keys.Help):
+		m.help.ShowAll = !m.help.ShowAll
+	case key.Matches(msg, keys.Stats):
+		// Stats are drawn once, so their bars start full.
+		m.screen, m.pos, m.vel = statsScreen, 1, 0
+		m.layout()
+		m.stats.GotoTop()
+	case key.Matches(msg, keys.Mixed):
+		m.dialog = true
+	case key.Matches(msg, keys.Back), key.Matches(msg, keys.Left):
+		m.inDetail = false
+	case key.Matches(msg, keys.Down) && m.inDetail:
+		m.right = min(m.right+1, m.detailRows()-1)
+	case key.Matches(msg, keys.Up) && m.inDetail:
+		m.right = max(m.right-1, 0)
+	case key.Matches(msg, keys.Top) && m.inDetail:
+		m.right = 0
+	case key.Matches(msg, keys.Bottom) && m.inDetail:
+		m.right = m.detailRows() - 1
+	case key.Matches(msg, keys.Down):
+		m.left, m.right = min(m.left+1, rows-1), 0
+	case key.Matches(msg, keys.Up):
+		m.left, m.right = max(m.left-1, 0), 0
+	case key.Matches(msg, keys.Top):
+		m.left, m.right = 0, 0
+	case key.Matches(msg, keys.Bottom):
+		m.left, m.right = rows-1, 0
+	case key.Matches(msg, keys.Right), key.Matches(msg, keys.Open):
+		return m.open(key.Matches(msg, keys.Open))
 	}
 	return nil
 }
 
-func (m *model) move(step int) {
-	for i := m.cursor + step; i >= 0 && i < len(m.rows); i += step {
-		if m.rows[i].kind != "" {
-			m.cursor = i
-			return
+// open acts on the selected row: into a section's lessons, or with Enter, on
+// with the round the row stands for.
+func (m *model) open(enter bool) tea.Cmd {
+	switch {
+	case m.left >= 2 && !m.inDetail:
+		m.inDetail = true
+	case !enter:
+	case m.left == 0:
+		if len(m.session) == 0 {
+			m.session, m.done = m.plan(), nil
 		}
+		if len(m.session) > len(m.done) {
+			return m.before(m.session[len(m.done)], true)
+		}
+	case m.left == 1:
+		m.dialog = true
+	default:
+		s := m.sections()[m.left-2]
+		lessons := m.catalog.InSection(s.ID)
+		if m.right == len(lessons) {
+			return m.start(Planned{Kind: "section", Section: s.ID}, false)
+		}
+		l, kind := lessons[m.right], "review"
+		if m.items[l.ID].Box == 0 {
+			kind = "learn"
+		}
+		return m.before(Planned{Kind: kind, Lesson: l}, false)
 	}
+	return nil
 }
 
-func (m *model) scrollKey(key string, lines int) {
-	page := m.bodyHeight(lines, "")
-	switch key {
-	case "q", "esc":
-		m.view = mapView
-	case "j", "down":
-		m.scroll++
-	case "k", "up":
-		m.scroll--
-	case " ", "f", "pgdown", "ctrl+d":
-		m.scroll += page
-	case "b", "pgup", "ctrl+u":
-		m.scroll -= page
-	case "g", "home":
-		m.scroll = 0
-	case "G", "end":
-		m.scroll = lines
+func (m *model) pageKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Open):
+		m.screen = homeScreen
+		return m.start(m.pending, m.fromSession)
+	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back):
+		m.screen = homeScreen
+	case key.Matches(msg, keys.Top):
+		m.page.GotoTop()
+	case key.Matches(msg, keys.Bottom):
+		m.page.GotoBottom()
+	default:
+		m.page, _ = m.page.Update(msg)
 	}
-	m.scroll = max(0, min(m.scroll, lines-page))
+	return nil
 }
 
-// mixedSections lists the sections a mixed round can be over, Custom too
-// when it has lessons.
-func (m *model) mixedSections() []Section {
-	sections := m.catalog.Sections
-	if len(m.catalog.InSection("custom")) > 0 {
-		sections = append(sections[:len(sections):len(sections)], Section{ID: "custom", Name: "Custom"})
+func (m *model) statsKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back), key.Matches(msg, keys.Stats):
+		m.screen = homeScreen
+	case key.Matches(msg, keys.Top):
+		m.stats.GotoTop()
+	case key.Matches(msg, keys.Bottom):
+		m.stats.GotoBottom()
+	default:
+		m.stats, _ = m.stats.Update(msg)
 	}
-	return sections
+	return nil
 }
 
 // mixedLessons is every lesson of the chosen sections, or with none chosen,
@@ -394,29 +342,28 @@ func (m *model) mixedLessons() []*Lesson {
 	return lessons
 }
 
-func (m *model) mixedKey(key string) tea.Cmd {
-	sections := m.mixedSections()
-	switch key {
-	case "q", "esc":
-		m.view = mapView
-	case "j", "down":
+func (m *model) dialogKey(msg tea.KeyPressMsg) tea.Cmd {
+	sections := m.sections()
+	switch {
+	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back), key.Matches(msg, keys.Mixed):
+		m.dialog = false
+	case key.Matches(msg, keys.Down):
 		m.mixCursor = min(m.mixCursor+1, len(sections)-1)
-	case "k", "up":
+	case key.Matches(msg, keys.Up):
 		m.mixCursor = max(m.mixCursor-1, 0)
-	case "h", "left":
+	case key.Matches(msg, keys.Left):
 		m.length = max(m.length-1, 0)
-	case "l", "right":
+	case key.Matches(msg, keys.Right):
 		m.length = min(m.length+1, len(lengths)-1)
-	case " ", "x":
-		id := sections[m.mixCursor].ID
-		if m.chosen[id] {
+	case key.Matches(msg, keys.Toggle):
+		if id := sections[m.mixCursor].ID; m.chosen[id] {
 			delete(m.chosen, id)
 		} else {
 			m.chosen[id] = true
 		}
-	case "enter":
+	case key.Matches(msg, keys.Open):
 		if lessons := m.mixedLessons(); len(lessons) > 0 {
-			m.view = mapView
+			m.dialog = false
 			length := lengths[m.length]
 			return m.start(Planned{Kind: "mixed", Lessons: lessons, Count: length.count, Limit: length.limit}, false)
 		}
@@ -424,65 +371,28 @@ func (m *model) mixedKey(key string) tea.Cmd {
 	return nil
 }
 
-func (m *model) mixedLines() []string {
-	lessons := len(m.mixedLessons())
-	over := fmt.Sprintf("every learned lesson (%d)", lessons)
-	if len(m.chosen) > 0 {
-		var names []string
-		for _, s := range m.mixedSections() {
-			if m.chosen[s.ID] {
-				names = append(names, s.Name)
-			}
-		}
-		over = fmt.Sprintf("%s (%d lessons)", strings.Join(names, ", "), lessons)
-	} else if lessons == 0 {
-		over = "nothing learned yet; choose sections below"
-	}
-	lines := []string{bold.Render("Mixed practice") + "   goals across lessons, keys hidden, no box moves", "",
-		"  Length   ‹ " + lengths[m.length].label + " ›", "  Over     " + truncate(over, 68), ""}
-	for i, s := range m.mixedSections() {
-		learned, all := 0, m.catalog.InSection(s.ID)
-		for _, l := range all {
-			if m.items[l.ID].Box > 0 {
-				learned++
-			}
-		}
-		mark := map[bool]string{true: "[x]", false: "[ ]"}[m.chosen[s.ID]]
-		text := fmt.Sprintf("  %s %s%d of %d learned", mark, pad(s.Name, 22), learned, len(all))
-		if i == m.mixCursor {
-			text = selected.Render("›" + text[1:])
-		}
-		lines = append(lines, text)
-	}
-	return lines
-}
-
-// open shows a lesson's page before its round, or starts a lesson without one.
-// In a session a page is shown only for a lesson that is still new.
-func (m *model) open(p Planned, fromSession bool) tea.Cmd {
+// before shows a lesson's page ahead of its round, or starts a lesson without
+// one. In a session only a new lesson opens on its page.
+func (m *model) before(p Planned, fromSession bool) tea.Cmd {
 	if len(p.Lesson.Page) == 0 || fromSession && m.items[p.Lesson.ID].Box > 0 {
 		return m.start(p, fromSession)
 	}
-	m.view, m.scroll, m.pending, m.fromSession = pageView, 0, p, fromSession
-	m.page = p.Lesson.Page
+	m.screen, m.pending, m.fromSession = pageScreen, p, fromSession
+	m.layout()
+	m.page.GotoTop()
 	return nil
 }
 
 type roundDone struct {
-	planned Planned
-	request Request
-	before  map[string]bool
-	err     error
+	planned     Planned
+	request     Request
+	before      map[string]bool
+	fromSession bool
+	err         error
 }
 
 // start writes the round's request and hands the terminal to Vim.
 func (m *model) start(p Planned, fromSession bool) tea.Cmd {
-	if fromSession {
-		m.session = m.session[1:]
-	} else {
-		// A round outside the session can change what the session should be.
-		m.session = nil
-	}
 	request := Draw(m.catalog, p, m.records)
 	before := map[string]bool{}
 	for _, r := range Records(m.state) {
@@ -495,13 +405,13 @@ func (m *model) start(p Planned, fromSession bool) tea.Cmd {
 		err = os.WriteFile(path, data, 0o600)
 	}
 	if err != nil {
-		return func() tea.Msg { return roundDone{p, request, before, err} }
+		return func() tea.Msg { return roundDone{p, request, before, fromSession, err} }
 	}
 	cmd := exec.Command("vim",
 		"-c", "set runtimepath^="+vimEscape(m.catalog.Root),
 		"-c", "runtime plugin/vim_dojo.vim", // :DojoNote, if not installed as a package
 		"-c", "call vim_dojo#Run("+vimString(path)+")")
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return roundDone{p, request, before, err} })
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return roundDone{p, request, before, fromSession, err} })
 }
 
 func vimString(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
@@ -511,21 +421,24 @@ func vimEscape(s string) string {
 }
 
 // finish reads what the round left in the state directory and says how it
-// went. A round left early drops the rest of the session.
+// went. The session goes on only after a round of its own that ended; one
+// left early, one Vim could not run, or one outside it ends it, since a round
+// outside it can change what it should be.
 func (m *model) finish(done roundDone) {
 	os.Remove(filepath.Join(m.state, "round.json"))
-	title := done.planned.Title(m.catalog)
-	if done.err != nil {
-		m.banner = []string{"Could not run Vim for " + title + ": " + done.err.Error()}
-		m.session = nil
-		m.refresh()
-		return
+	p := done.planned
+	title := p.Title(m.catalog)
+	res := result{title: title, kind: p.Kind}
+	// The lesson as it was, to say what the round did to it.
+	var was Item
+	if p.Lesson != nil {
+		was = *m.items[p.Lesson.ID]
 	}
 	var round *Record
 	counts := map[string]int{}
 	placed := 0
 	for _, r := range Records(m.state) {
-		if done.before[r.Name] {
+		if done.err != nil || done.before[r.Name] {
 			continue
 		}
 		counts[r.Result]++
@@ -536,172 +449,114 @@ func (m *model) finish(done roundDone) {
 			placed++
 		}
 	}
-	finished := counts["clean"] + counts["unclean"] + counts["skipped"]
-	if round == nil {
+	switch {
+	case done.err != nil:
+		res.failed, res.note = true, "Could not run Vim for "+title+": "+done.err.Error()
+	case round == nil:
+		finished := counts["clean"] + counts["unclean"] + counts["skipped"]
 		of := fmt.Sprintf(" of %d", max(done.request.Count, len(done.request.Goals)))
 		if done.request.Limit > 0 {
 			of = ""
 		}
-		m.banner = []string{fmt.Sprintf("Left %s after %d%s goals, %d clean. Nothing was rescheduled.",
-			title, finished, of, counts["clean"])}
-		m.session = nil
-	} else {
-		m.banner = []string{fmt.Sprintf("%s  ·  %d of %d clean  ·  %d:%02d",
-			title, round.Clean, round.Goals, round.Seconds/60, round.Seconds%60)}
-		if round.Kind != "mixed" {
-			m.banner[0] += map[bool]string{true: "  ·  passed", false: "  ·  not passed"}[round.Pass()]
-		}
-		if placed > 0 {
-			m.banner = append(m.banner, fmt.Sprintf("%d %s placed as known.", placed,
-				map[bool]string{true: "lesson", false: "lessons"}[placed == 1]))
-		}
-	}
-	if len(m.session) == 0 {
-		m.sessionSize = 0
+		res.left, res.note = true, fmt.Sprintf("Left %s after %d%s goals, %d clean. Nothing was rescheduled.",
+			title, finished, of, counts["clean"])
+	default:
+		res.clean, res.goals, res.seconds, res.passed = round.Clean, round.Goals, round.Seconds, round.Pass()
 	}
 	m.refresh()
+	switch {
+	case round != nil && placed > 0:
+		res.note = plural(placed, "lesson") + " placed as known"
+	case round != nil && p.Lesson != nil && p.Kind != "mixed":
+		res.note = moved(was, *m.items[p.Lesson.ID], m.today())
+	}
+	m.last = &res
+	if done.fromSession && round != nil {
+		if m.done = append(m.done, res); len(m.done) == len(m.session) {
+			m.session, m.done = nil, nil
+		}
+	} else {
+		m.session, m.done = nil, nil
+	}
+	m.pos, m.vel = 0, 0
 }
 
-func (m *model) View() string {
-	switch m.view {
-	case pageView:
-		return m.window(m.pageLines(), faint.Render("Enter start the round · j k scroll · q back"))
-	case statsView:
-		return m.window(m.statsLines(), faint.Render("j k scroll · q back"))
-	case mixedView:
-		return m.window(m.mixedLines(), faint.Render("Enter start · Space choose a section · h l length · q back"))
+// moved says what a round did to its lesson's place in review.
+func moved(was, now Item, today int64) string {
+	when := due(&now, today)
+	switch {
+	case now.Box == 0:
+		return "still new"
+	case was.Box == 0:
+		return "now shaky · " + when
+	case now.Box > was.Box:
+		return fmt.Sprintf("box %d → %d · %s", was.Box, now.Box, when)
+	case now.Box < was.Box:
+		return fmt.Sprintf("back to box 1 · %s", when)
 	}
-	return m.mapView()
+	return when
 }
 
-// window shows the lines from the scroll position, with a footer, which
-// may take several lines.
-func (m *model) window(lines []string, footer string) string {
-	height := m.bodyHeight(len(lines), footer)
-	end := min(len(lines), m.scroll+height)
-	shown := lines[min(m.scroll, end):end]
-	return strings.Join(shown, "\n") + strings.Repeat("\n", height-len(shown)+1) + footer
-}
-
-func (m *model) bodyHeight(lines int, footer string) int {
-	if m.height > 1 {
-		return max(1, m.height-strings.Count(footer, "\n")-1)
+func (m *model) View() tea.View {
+	// Bubble Tea draws once before it knows the window's size, and tests
+	// draw without ever sending one.
+	if m.width == 0 {
+		m.width, m.height = 80, 24
+		m.layout()
 	}
-	return lines
-}
-
-// The last round's summary stays in view above the legend.
-func (m *model) mapView() string {
-	footer := faint.Render("○ new  ◐ shaky  ● solid   Enter open · s stats · q quit")
-	if len(m.banner) > 0 {
-		footer = bold.Render("  "+strings.Join(m.banner, "\n  ")) + "\n" + footer
-	}
-	height := m.bodyHeight(len(m.rows), footer)
-	if m.cursor < m.offset {
-		m.offset = m.cursor
-	} else if m.cursor >= m.offset+height {
-		m.offset = m.cursor - height + 1
-	}
-	if m.cursor == m.first("session") {
-		m.offset = 0
-	}
-	colour := strings.NewReplacer(symbols[0], levels[0].Render(symbols[0]),
-		symbols[1], levels[1].Render(symbols[1]), symbols[2], levels[2].Render(symbols[2]))
-	var lines []string
-	for i, r := range m.rows {
-		switch {
-		case i == m.cursor:
-			lines = append(lines, selected.Render("›"+strings.TrimPrefix(r.text, " ")))
-		case i == 0 || r.kind == "" && r.text != "" && !strings.HasPrefix(r.text, " "):
-			lines = append(lines, bold.Render(colourless(r.text))+colourSymbols(r.text, colour))
-		default:
-			lines = append(lines, colour.Replace(r.text))
+	var content string
+	switch m.screen {
+	case pageScreen:
+		content = m.pageView()
+	case statsScreen:
+		content = m.statsView()
+	default:
+		content = m.homeView()
+		if m.dialog {
+			content = m.overlay(content, m.dialogView())
 		}
 	}
-	m.scroll = m.offset
-	return m.window(lines, footer)
+	// Whatever a screen drew, nothing reaches past the window.
+	v := tea.NewView(lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(content))
+	v.AltScreen = true
+	v.WindowTitle = "Vim Dojo"
+	return v
 }
 
-// A section row's name is bold and its bar coloured.
-func colourless(text string) string {
-	if i := strings.IndexAny(text, "○◐●"); i >= 0 {
-		return text[:i]
-	}
-	return text
+// keys are the shell's bindings, which the help line reads its text from.
+var keys = struct {
+	Up, Down, Left, Right, Top, Bottom, Open, Toggle, Mixed, Stats, Help, Back, Quit key.Binding
+}{
+	Up:     key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
+	Down:   key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
+	Left:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h", "back")),
+	Right:  key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l", "lessons")),
+	Top:    key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "top")),
+	Bottom: key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "bottom")),
+	Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+	Toggle: key.NewBinding(key.WithKeys("space", "x"), key.WithHelp("space", "choose")),
+	Mixed:  key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mixed")),
+	Stats:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
+	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	Quit:   key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 }
 
-func colourSymbols(text string, colour *strings.Replacer) string {
-	if i := strings.IndexAny(text, "○◐●"); i >= 0 {
-		return colour.Replace(text[i:])
+// bindings is a help.KeyMap: one line of keys, or with ? columns of four.
+type bindings []key.Binding
+
+func (b bindings) ShortHelp() []key.Binding { return b }
+
+func (b bindings) FullHelp() [][]key.Binding {
+	var columns [][]key.Binding
+	for i := 0; i < len(b); i += 4 {
+		columns = append(columns, b[i:min(i+4, len(b))])
 	}
-	return ""
+	return columns
 }
 
-var inline = regexp.MustCompile("`[^`]+`")
-
-// pageLines renders a lesson page: headings bold, code blocks indented and
-// coloured, inline code coloured, paragraphs wrapped to the window.
-func (m *model) pageLines() []string {
-	width := 80
-	if m.width > 0 {
-		width = min(width, m.width)
-	}
-	var lines []string
-	inCode := false
-	for _, line := range m.page {
-		switch {
-		case strings.HasPrefix(line, "```"):
-			inCode = !inCode
-		case inCode:
-			lines = append(lines, code.Render("    "+line))
-		case strings.HasPrefix(line, "#"):
-			lines = append(lines, bold.Render(strings.TrimLeft(line, "# ")))
-		default:
-			wrapped := lipgloss.NewStyle().Width(width).Render(line)
-			for part := range strings.SplitSeq(wrapped, "\n") {
-				part = strings.TrimRight(part, " ")
-				lines = append(lines, inline.ReplaceAllStringFunc(part, func(s string) string {
-					return code.Render(strings.Trim(s, "`"))
-				}))
-			}
-		}
-	}
-	return lines
-}
-
-// statsLines shows, for each lesson with rounds, the clean count and the
-// seconds per goal of its last five learn and review rounds.
-func (m *model) statsLines() []string {
-	lines := []string{bold.Render("Stats") + "   recent rounds, oldest first: clean of goals, seconds per goal", ""}
-	for _, l := range m.catalog.Lessons {
-		item := m.items[l.ID]
-		if len(item.Recent) == 0 {
-			continue
-		}
-		lines = append(lines, "  "+levels[item.Level()].Render(symbols[item.Level()])+" "+
-			pad(truncate(l.Title, 19), 20)+recent(item.Recent))
-	}
-	var mixed []Record
-	for _, r := range m.records {
-		if r.Result == "round" && r.Kind == "mixed" {
-			mixed = append(mixed, r)
-		}
-	}
-	if len(mixed) > 0 {
-		lines = append(lines, "", "  "+pad("Mixed practice", 20)+recent(mixed))
-	}
-	if len(lines) == 2 {
-		lines = append(lines, "  No rounds yet.")
-	}
-	return lines
-}
-
-// recent is the last five rounds: clean of goals, and seconds per goal.
-func recent(records []Record) string {
-	var rounds []string
-	for _, r := range records[max(0, len(records)-5):] {
-		rounds = append(rounds, fmt.Sprintf("%d/%d %4.1fs", r.Clean, r.Goals,
-			float64(r.Seconds)/float64(max(1, r.Goals))))
-	}
-	return strings.Join(rounds, "   ")
+// named is a binding under other help text.
+func named(b key.Binding, keys, text string) key.Binding {
+	b.SetHelp(keys, text)
+	return b
 }

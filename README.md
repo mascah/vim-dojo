@@ -14,46 +14,79 @@ ln -s "$PWD/dojo" ~/.local/bin/dojo
 dojo
 ```
 
-`dojo` opens the map in your terminal. Each round runs in your own `vim`, with
-your config, and you are back at the map when it ends. The shell finds the
+`dojo` opens the dashboard in your terminal. Each round runs in your own `vim`,
+with your config, and you are back at the dashboard when it ends. The shell finds the
 lessons next to the binary, following the link; set `VIM_DOJO_ROOT` to this
 directory if you move the binary instead.
 
 For `:DojoNote` in your everyday Vim, install this repository as a Vim package
 under `~/.vim/pack/dojo/start/vim-dojo`. It is the dojo's only Vim command.
 
-## The map
+## The dashboard
 
 ```
-Vim Dojo                                    2 due today · 1 in inbox
-
-  ▶ Start today's session        review w b e  ·  learn I A
-  ▶ Mixed practice
-
-Foundations           ●●◐◐       2 of 4 solid
-  ● modes and Esc     solid     due in 6 days
-  ● h j k l           solid     due in 9 days
-  ◐ w b e             shaky     due today
-  ◐ i a               shaky     due tomorrow
-  ▷ Review Foundations
-Entering Insert       ○○○○       0 of 4 solid
-
-○ new  ◐ shaky  ● solid   Enter open · s stats · q quit
+ VIM DOJO  practice in your own Vim  1 in inbox · ~/.local/state/vim-dojo/inbox
+╭─ Due today ──────╮╭─ Streak ─────────╮╭─ Solid ──────────╮╭─ This week ──────╮
+│ 3 lessons        ││ 6 days           ││ 11 of 53         ││ 83% clean        │
+│ █▁▆▃▃▃▃ 7 days   ││ ▁▁▅▅▅▅▁█▅▅▂▂▅▁   ││ ━━━━━━━━━━━  21% ││ ██▇██▅▆▇▇▇▆▇▅▇▇▆ │
+╰──────────────────╯╰──────────────────╯╰──────────────────╯╰──────────────────╯
+╭─ Practice ────────────────────╮╭─ Today's session ──────────────── 4 rounds ─╮
+│ › ▶ Start today's session     ││                                             │
+│   ▶ Mixed practice            ││  ▶ review verb + motion       ◐ shaky       │
+│ ───────────────────────────── ││  · review t T                 ◐ shaky       │
+│   Foundations          ●●●●   ││  · review c                   ◐ shaky       │
+│   Entering Insert      ●●◐●   ││  · learn  dd cc D C           ○ new         │
+│   Along the line       ●●●◐   ││                                             │
+│   Operators            ◐●◐○○○ ││  A session reviews up to three due lessons, │
+│   Through the file     ○○○○○  ││  oldest first, then teaches the next new    │
+│   Search and jumps     ○○○○○○ ││  one. Eight clean goals of ten pass a       │
+│   Text objects         ○○○○○○ ││  round.                                     │
+│   Repeat               ○○○○   ││                                             │
+│   Visual               ○○○○   ││                                             │
+│   Registers and macros ○○○○○  ││                                             │
+│   Ex                   ○○○○○  ││                                             │
+│                               ││                                             │
+│                               ││                                             │
+╰───────────────────────────────╯╰─────────────────────────────────────────────╯
+ j/k move • l lessons • enter open • m mixed • s stats • ? help • q quit
 ```
 
 The curriculum is eleven sections of small lessons, listed in teaching order
 in `lessons/outline.json`. Each lesson is **new** until you pass a learn round
 on it, **shaky** while you are still learning it, and **solid** once you recall
-it reliably, with when it is next due. Move with `j` and `k`. Enter on the
-session row starts today's session. Enter on a lesson opens its page, which
-scrolls with `j`, `k`, and Space; Enter there starts a learn round while the
-lesson is new and a review round after that. `s` shows stats: the clean count
-and seconds per goal of each lesson's recent rounds. `q` quits.
+it reliably, with when it is next due.
+
+The practice pane on the left starts today's session or mixed practice, and
+lists the sections with a symbol for each lesson. The pane on the right shows
+what the cursor is on: the session's rounds, a note on mixed practice, or a
+section's lessons with their boxes, when each is due, and the selected
+lesson's keys. Above the panes are the lessons due today, your streak, how
+many lessons are solid, and this week's clean rate. On a tall terminal a strip
+below them shows your practice by day, the reviews coming up, and the lessons
+in each box.
+
+| Key | Action |
+| --- | --- |
+| `j` `k` | Move in the pane with the focus; `g` and `G` go to its first and last row. |
+| `l`, or Enter on a section | Into the section's lessons. A lesson is reached through its section. |
+| `h`, `esc` | Back to the practice pane. `esc` does not quit. |
+| Enter | Start today's session or its next round, open a lesson's page, or start a section review. |
+| `m` | Mixed practice. |
+| `s` | Stats. |
+| `?` | Every key. |
+| `q` | Quit. On a page, stats, or mixed practice, `q` and `esc` go back. |
+
+Enter on a lesson opens its page, which scrolls with `j`, `k`, Space, `b`,
+`d`, `u`, `g`, and `G`; Enter there starts a learn round while the lesson is
+new and a review round after that. `s` shows stats: your totals, the strip,
+and a row for each lesson with its box, its recent rounds, the last one's
+clean count, its seconds per goal over the last five, and when it is due.
 
 Today's session is a review round for each of up to three due lessons, oldest
 first, then a learn round on the next new lesson, which opens on its page.
-After each round the map shows how it went, and Enter on the session row
-starts the next. Leaving a round early, by quitting Vim, ends the session.
+After each round a line above the keys says whether it passed, its clean
+count and time, and what it did to the lesson, and the session pane ticks it
+off. Enter on the session row starts the next. Leaving a round early, by quitting Vim, ends the session.
 
 Every section ends in a review: twenty goals drawn evenly from its lessons,
 with the keys hidden. Take it whenever you like. Passing it places the
@@ -61,11 +94,11 @@ section's new lessons as already known, so you can skip what you know.
 Not passing changes nothing.
 
 Mixed practice draws goals across every lesson you have learned, leaning
-toward due and shaky ones, with the keys hidden. In its view, Space on a
+toward due and shaky ones, with the keys hidden. In its dialog, Space on a
 section limits the round to the sections you choose, and `h` and `l` set its
 length: 10, 20, or 40 goals, or 2, 5, or 10 minutes. A timed round ends at
 the limit, and goes round its goals again if you get through them first.
-Mixed rounds move no lesson's box; stats show them on a line of their own.
+Mixed rounds move no lesson's box; stats show them on a row of their own.
 
 ## Practising
 
@@ -74,9 +107,9 @@ Mixed rounds move no lesson's box; stats show them on a line of their own.
 | `<LocalLeader>h` | `:DojoHint` | The solution keys, then a demo. Any hint makes the goal not clean. |
 | `<LocalLeader>r` | `:DojoReset` | Restore the goal and starting cursor. |
 | `<LocalLeader>s` | `:DojoSkip` | Move to the next goal, which is not clean. |
-| `Enter` | `:DojoNext` | Leave a round's summary, back to the map. During a round Enter is not mapped. |
+| `Enter` | `:DojoNext` | Leave a round's summary, back to the dashboard. During a round Enter is not mapped. |
 | | `:DojoCheck` | Show where the attempt stands. |
-| | `:DojoClose` | Leave the round, back to the map. |
+| | `:DojoClose` | Leave the round, back to the dashboard. |
 
 `<LocalLeader>` is `\` unless you have set `maplocalleader`.
 
@@ -167,8 +200,8 @@ When an edit in your real work feels clumsy, select the lines or put the cursor
 on one and run `:DojoNote` with an optional note, such as
 `:'<,'>DojoNote took me ages to swap these`. The dojo saves just those lines,
 the filetype, and the note to `inbox/` in the state directory. It reads
-nothing else from your buffers, and only when you run the command. The map
-shows how many notes are waiting and where.
+nothing else from your buffers, and only when you run the command. The
+dashboard shows how many notes are waiting and where.
 
 To turn a note into a drill, give your model the note file with: “Here is some
 text I found awkward to edit in Vim, with my note. Write one Vim editing drill
