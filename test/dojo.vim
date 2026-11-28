@@ -651,7 +651,10 @@ try
       endfor
     endfor
   endfor
-  DojoClose
+  " A section of generated lessons only starts no round here.
+  if exists(':DojoClose')
+    DojoClose
+  endif
 
   " snippet-set: at least 24 snippets of 20 to 40 lines across six kinds.
   let s:snippets = vim_dojo#drills#Snippets()
@@ -659,7 +662,7 @@ try
   call assert_equal([], map(filter(copy(s:snippets), 'len(v:val.lines) < 20 || len(v:val.lines) > 40'), 'v:val.name'))
   call assert_equal(['config', 'go', 'html', 'markdown', 'python', 'typescript'],
         \ uniq(sort(map(copy(s:snippets), 'index(["yaml", "toml", "json"], v:val.ft) >= 0 ? "config" : v:val.ft'))))
-  let s:generated = filter(vim_dojo#drills#Lessons(), 'has_key(v:val, "generators")')
+  let s:generated = filter(vim_dojo#drills#Lessons(), 'has_key(v:val, "generators") && (empty(s:only) || v:val.section ==# s:only)')
 
   " targets-from-vim and no-short-walk: on every snippet a lesson is offered,
   " a round of its goals is each solved clean at par by its own solution, and
