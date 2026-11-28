@@ -1,0 +1,59 @@
+name: Release
+
+# release-please keeps a release PR open from the Conventional Commits on main;
+# merging it tags the release and creates the GitHub Release. In the same run,
+# and only then, GoReleaser uploads the archives onto that release. One
+# workflow, because a tag pushed with GITHUB_TOKEN starts no other workflow.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
+
+      - if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - if: ${{ steps.release.outputs.release_created }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # A release builds from no cache another run could have written.
+          cache: false
+
+      - if: ${{ steps.release.outputs.release_created }}
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.19.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fails the release loudly if install.sh cannot install what was
+      # uploaded, lessons included.
+      - name: Install the release and run it
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          dir=$(mktemp -d)
+          VIM_DOJO_INSTALL_DIR="$dir/bin" XDG_DATA_HOME="$dir/share" sh install.sh "$TAG"
+          got=$("$dir/bin/dojo" version)
+          echo "$got"
+          test "$got" = "dojo ${TAG#v}"
+          test -f "$dir/share/vim-dojo/lessons/outline.json"

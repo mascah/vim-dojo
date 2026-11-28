@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Every base branch, since pull requests may be stacked.
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VIM_VERSION: v9.2.0450
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # apt's Vim is older than the 9.1.0597 the dojo needs, so the Vim it is
+      # developed on is built from source into ~/vim, once per runner image,
+      # and restored from the cache after that.
+      - id: image
+        run: echo "os=$ImageOS" >> "$GITHUB_OUTPUT"
+      - id: vim
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/vim
+          key: vim-${{ env.VIM_VERSION }}-${{ steps.image.outputs.os }}-${{ runner.arch }}
+      - if: steps.vim.outputs.cache-hit != 'true'
+        uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1.6.1
+        with:
+          version: ${{ env.VIM_VERSION }}
+      - run: echo "$HOME/vim/bin" >> "$GITHUB_PATH"
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: 1.59.0
+      # test/typing.sh types real keys into Vim through tmux.
+      - run: command -v tmux >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q tmux; }
+      - run: just check
+      - run: shellcheck install.sh
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - run: uvx zizmor==1.31.1 --format=github .github/
+        env:
+          GH_TOKEN: ${{ github.token }}

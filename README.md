@@ -5,22 +5,30 @@ rounds of ten goals, counts the keys you use against par, and brings lessons
 back for review when they are due. Practice happens in scratch buffers with your own
 mappings.
 
-Vim Dojo needs Vim 9.1.0597 or later and Go to build its shell. From this
-directory:
+Vim Dojo needs Vim 9.1.0597 or later, on macOS or Linux. Install it with:
 
 ```sh
-go build -o dojo .
-ln -s "$PWD/dojo" ~/.local/bin/dojo
+curl -fsSL https://raw.githubusercontent.com/mascah/vim-dojo/main/install.sh | sh
 dojo
 ```
 
+The script puts the latest release in `~/.local/share/vim-dojo`, or under
+`XDG_DATA_HOME` when that is set, and links `dojo` to it from `~/.local/bin`,
+or from the folder `VIM_DOJO_INSTALL_DIR` names. It checks the download
+against the release's checksums, and installs nothing if they differ. Run it
+again to upgrade; your progress is kept. To install a given version, name its
+tag: `sh -s -- v0.1.0` in place of `sh`. `dojo version` says which version
+you have. To build from a checkout instead, with Go and
+[`just`](https://github.com/casey/just), run `just install` there.
+
 `dojo` opens the dashboard in your terminal. Each round runs in your own `vim`,
 with your config, and you are back at the dashboard when it ends. The shell finds the
-lessons next to the binary, following the link; set `VIM_DOJO_ROOT` to this
-directory if you move the binary instead.
+lessons next to the binary, following the link; set `VIM_DOJO_ROOT` to the
+folder that holds `lessons/` if you move the binary instead.
 
-For `:DojoNote` in your everyday Vim, install this repository as a Vim package
-under `~/.vim/pack/dojo/start/vim-dojo`. It is the dojo's only Vim command.
+For `:DojoNote` in your everyday Vim, link `~/.vim/pack/dojo/start/vim-dojo`
+to `~/.local/share/vim-dojo`, or to your checkout, as a Vim package. It is the
+dojo's only Vim command.
 
 ## The dashboard
 
@@ -211,9 +219,5 @@ from Custom drills above.
 
 ## Development
 
-Run the checks from this directory with
-`vim -Nu NONE -i NONE -n -es -S test/dojo.vim` for the runner and `go test .`
-for the shell. Set `DOJO_SECTION=foundations` to check the drill solutions of one
-section only. `sh test/typing.sh` types real keys into Vim through tmux, with
-pauses, and plays a round from the shell end to end; it is skipped where tmux
-is missing.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md): `just check` runs every check, and
+pull request titles are Conventional Commits, from which releases are cut.
